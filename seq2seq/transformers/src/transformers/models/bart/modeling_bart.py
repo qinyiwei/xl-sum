@@ -992,7 +992,7 @@ class BartDecoder(BartPretrainedModel):
             encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
 
         # embed positions #TODO: find the differences of two postion embeddings
-        positions = self.embed_positions(input_shape, past_key_values_length - self.preseqlen)#positions = self.embed_positions(input_ids, use_cache=use_cache)#positions = self.embed_positions(input_shape, past_key_values_length)
+        positions = self.embed_positions(input_shape, past_key_values_length - self.preseqlen if past_key_values_length >= self.preseqlen else past_key_values_length)#positions = self.embed_positions(input_ids, use_cache=use_cache)#positions = self.embed_positions(input_shape, past_key_values_length)
 
         if self.do_blenderbot_90_layernorm:
             hidden_states = self.layernorm_embedding(inputs_embeds)
@@ -1134,6 +1134,7 @@ class BartModel(BartPretrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
+                past_key_values=past_key_values,
             )
         # If the user passed a tuple for encoder_outputs, we wrap it in a BaseModelOutput when return_dict=False
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):

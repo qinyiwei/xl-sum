@@ -119,7 +119,7 @@ def BartLayerNorm(normalized_shape: torch.Size, eps: float = 1e-5, elementwise_a
     return torch.nn.LayerNorm(normalized_shape, eps, elementwise_affine)
 
 
-class BartLearnedPositionalEmbedding(nn.Embedding):
+class BartLearnedPositionalEmbedding_orig(nn.Embedding):
     """
     This module learns positional embeddings up to a fixed maximum size. Padding ids are ignored by either offsetting
     based on padding_idx or by setting padding_idx to None and ensuring that the appropriate position ids are passed to
@@ -236,12 +236,12 @@ class BartAttention(nn.Module):
                 if self.preseqlen == past_key_value[0].shape[2]:
                     key_states = self._shape(self.k_proj(key_value_states), -1, bsz)
                     value_states = self._shape(self.v_proj(key_value_states), -1, bsz)
-                    key_states = torch.cat([past_key_value[0], key_states], dim=2)
-                    value_states = torch.cat([past_key_value[1], value_states], dim=2)
+                    key_states = torch.cat([past_key_value[0], key_states], dim=2) 
+                    value_states = torch.cat([past_key_value[1], value_states], dim=2) 
                 else:
                     key_states = past_key_value[0]
                     value_states = past_key_value[1]
-                if attention_mask is not None:
+                if attention_mask is not None and attention_mask.shape[3] != key_states.shape[2]:
                     extend_mask = torch.ones(bsz, self.preseqlen).to(key_states.device).bool()
                     prev_key_padding_mask = _expand_mask(extend_mask, attention_mask.dtype, tgt_len = tgt_len) 
                     attention_mask = torch.cat([prev_key_padding_mask, attention_mask ], dim=3)
@@ -256,8 +256,8 @@ class BartAttention(nn.Module):
             # reuse k, v, self_attention
             key_states = self._shape(self.k_proj(hidden_states), -1, bsz)
             value_states = self._shape(self.v_proj(hidden_states), -1, bsz)
-            key_states = torch.cat([past_key_value[0], key_states], dim=2)
-            value_states = torch.cat([past_key_value[1], value_states], dim=2)
+            key_states = torch.cat([past_key_value[0], key_states], dim=2) 
+            value_states = torch.cat([past_key_value[1], value_states], dim=2) 
             if attention_mask is not None and attention_mask.shape[3] != key_states.shape[2]:
                 extend_mask = torch.ones(bsz, self.preseqlen).to(key_states.device).bool()
                 prev_key_padding_mask = _expand_mask(extend_mask, attention_mask.dtype, tgt_len = tgt_len) 
@@ -366,6 +366,8 @@ class BartEncoderLayer(nn.Module):
         if self.normalize_before:
             hidden_states = self.self_attn_layer_norm(hidden_states)
         encoder_attn_past_key_value = past_key_value[4:] if past_key_value is not None else None
+        if encoder_attn_past_key_value is not None and encoder_attn_past_key_value[0] is None and encoder_attn_past_key_value[1] is None:
+            encoder_attn_past_key_value = None
         hidden_states, attn_weights, _ = self.self_attn(
             hidden_states=hidden_states, attention_mask=attention_mask, output_attentions=output_attentions, past_key_value=encoder_attn_past_key_value,
         )
@@ -449,6 +451,8 @@ class BartDecoderLayer(nn.Module):
         # Self Attention
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
+        if self_attn_past_key_value is not None and self_attn_past_key_value[0] is None and self_attn_past_key_value[1] is None:
+            self_attn_past_key_value = None
         # add present self-attn cache to positions 1,2 of present_key_value tuple
         hidden_states, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
@@ -471,6 +475,8 @@ class BartDecoderLayer(nn.Module):
 
             # cross_attn cached key/values tuple is at positions 3,4 of present_key_value tuple
             cross_attn_past_key_value = past_key_value[2:4] if past_key_value is not None else None
+            if cross_attn_past_key_value is not None and cross_attn_past_key_value[0] is None and cross_attn_past_key_value[1] is None:
+                cross_attn_past_key_value = None
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -695,7 +701,7 @@ class BartEncoder(BartPretrainedModel):
                 config.max_position_embeddings, embed_dim, self.padding_idx
             )
         else:
-            self.embed_positions = BartLearnedPositionalEmbedding(
+            self.embed_positions = BartLearnedPositionalEmbedding_orig(
                 config.max_position_embeddings,
                 embed_dim,
                 self.padding_idx,
@@ -769,9 +775,9 @@ class BartEncoder(BartPretrainedModel):
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
-
-        embed_pos = self.embed_positions(input_shape)
-
+        #TODO: find the differences of two postion method #TODO: what if input_ids shape changes???
+        embed_pos = self.embed_positions(input_shape)#embed_pos = self.embed_positions(input_ids)#embed_pos = self.embed_positions(input_shape)
+        #TODO: add postion
         hidden_states = inputs_embeds + embed_pos
         hidden_states = self.layernorm_embedding(hidden_states)
         hidden_states = F.dropout(hidden_states, p=self.dropout, training=self.training)
@@ -828,7 +834,7 @@ class BartDecoder(BartPretrainedModel):
         self.padding_idx = config.pad_token_id
         self.max_target_positions = config.max_position_embeddings
         self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
-
+        self.preseqlen = config.preseqlen
         if embed_tokens is not None:
             self.embed_tokens = embed_tokens
         else:
@@ -839,7 +845,7 @@ class BartDecoder(BartPretrainedModel):
                 config.max_position_embeddings, config.d_model, config.pad_token_id
             )
         else:
-            self.embed_positions = BartLearnedPositionalEmbedding(
+            self.embed_positions = BartLearnedPositionalEmbedding_orig(
                 config.max_position_embeddings,
                 config.d_model,
                 self.padding_idx,
@@ -933,7 +939,8 @@ class BartDecoder(BartPretrainedModel):
             raise ValueError("You have to specify either decoder_input_ids or decoder_inputs_embeds")
 
         # past_key_values_length
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+        index = 0
+        past_key_values_length = past_key_values[0][index].shape[2] if (past_key_values is not None and past_key_values[0][index] is not None) else 0
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids) * self.embed_scale
@@ -984,13 +991,13 @@ class BartDecoder(BartPretrainedModel):
             # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
             encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
 
-        # embed positions
-        positions = self.embed_positions(input_shape, past_key_values_length)
+        # embed positions #TODO: find the differences of two postion embeddings
+        positions = self.embed_positions(input_shape, past_key_values_length - self.preseqlen)#positions = self.embed_positions(input_ids, use_cache=use_cache)#positions = self.embed_positions(input_shape, past_key_values_length)
 
         if self.do_blenderbot_90_layernorm:
             hidden_states = self.layernorm_embedding(inputs_embeds)
             hidden_states += positions
-        else:
+        else:#TODO: add postion
             hidden_states = inputs_embeds + positions
             hidden_states = self.layernorm_embedding(hidden_states)
 
@@ -1561,3 +1568,29 @@ class BartForQuestionAnswering(BartPretrainedModel):
             encoder_hidden_states=outputs.encoder_hidden_states,
             encoder_attentions=outputs.encoder_attentions,
         )
+
+class BartLearnedPositionalEmbedding(nn.Embedding):
+    """
+    This module learns positional embeddings up to a fixed maximum size.
+    Padding ids are ignored by either offsetting based on padding_idx
+    or by setting padding_idx to None and ensuring that the appropriate
+    position ids are passed to the forward function.
+    """
+
+    def __init__(self, num_embeddings: int, embedding_dim: int, padding_idx: int, offset):
+        # Bart is set up so that if padding_idx is specified then offset the embedding ids by 2
+        # and adjust num_embeddings appropriately. Other models dont have this hack
+        self.offset = offset
+        assert padding_idx is not None
+        num_embeddings += offset
+        super().__init__(num_embeddings, embedding_dim, padding_idx=padding_idx)
+
+    def forward(self, input_ids, use_cache=False):
+        """Input is expected to be of size [bsz x seqlen]."""
+        bsz, seq_len = input_ids.shape[:2]
+        if use_cache:
+            positions = input_ids.data.new(1, 1).fill_(seq_len - 1)  # called before slicing
+        else:
+            # starts at 0, ends at 1-seq_len
+            positions = torch.arange(seq_len, dtype=torch.long, device=self.weight.device)
+        return super().forward(positions + self.offset)

@@ -323,7 +323,7 @@ class T5Attention(nn.Module):
 
         self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
-        self.use_cross_prefix = False#config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
+        self.use_cross_prefix = config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -797,7 +797,7 @@ class T5Stack(T5PreTrainedModel):
 
         self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
-        self.use_cross_prefix = False
+        self.use_cross_prefix = config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):

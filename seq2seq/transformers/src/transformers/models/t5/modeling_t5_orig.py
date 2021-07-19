@@ -321,10 +321,6 @@ class T5Attention(nn.Module):
             self.relative_attention_bias = nn.Embedding(self.relative_attention_num_buckets, self.n_heads)
         self.pruned_heads = set()
 
-        self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
-        self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
-        self.use_cross_prefix = False#config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
-
     def prune_heads(self, heads):
         if len(heads) == 0:
             return
@@ -426,7 +422,7 @@ class T5Attention(nn.Module):
 
         real_seq_length = seq_length
 
-        if past_key_value is not None and past_key_value[0] is not None:
+        if past_key_value is not None:
             assert (
                 len(past_key_value) == 2
             ), "past_key_value should have 2 past states: keys and values. Got {} past states".format(
@@ -434,13 +430,7 @@ class T5Attention(nn.Module):
             )
             real_seq_length += past_key_value[0].shape[2] if query_length is None else query_length
 
-        #key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
-        if key_value_states is None:
-            key_length = real_seq_length
-        else:#cross attention
-            key_length = key_value_states.shape[1]
-            if self.use_prefix and past_key_value is not None and past_key_value[0] is not None and self.use_cross_prefix:
-                key_length += self.preseqlen
+        key_length = real_seq_length if key_value_states is None else key_value_states.shape[1]
 
         def shape(states):
             """  projection """
@@ -456,7 +446,7 @@ class T5Attention(nn.Module):
                 # self-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
                 hidden_states = shape(proj_layer(hidden_states))
-            elif past_key_value is None or (self.use_prefix and self.preseqlen == past_key_value.shape[2]):
+            elif past_key_value is None:
                 # cross-attn
                 # (batch_size, n_heads, seq_length, dim_per_head)
                 hidden_states = shape(proj_layer(key_value_states))
@@ -468,10 +458,7 @@ class T5Attention(nn.Module):
                     hidden_states = torch.cat([past_key_value, hidden_states], dim=2)
                 else:
                     # cross-attn
-                    if self.use_prefix and (self.preseqlen == past_key_value.shape[2]):
-                        hidden_states = torch.cat([past_key_value, hidden_states], dim=2)
-                    else:
-                        hidden_states = past_key_value
+                    hidden_states = past_key_value
             return hidden_states
 
         # get query states
@@ -500,7 +487,7 @@ class T5Attention(nn.Module):
 
             # if key and values are already calculated
             # we want only the last query position bias
-            if past_key_value is not None and past_key_value[0] is not None:
+            if past_key_value is not None:
                 position_bias = position_bias[:, :, -seq_length:, :]
 
             if mask is not None:
@@ -608,8 +595,6 @@ class T5Block(nn.Module):
 
         self.layer.append(T5LayerFF(config))
 
-        self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
-
     def forward(
         self,
         hidden_states,
@@ -626,30 +611,27 @@ class T5Block(nn.Module):
     ):
 
         if past_key_value is not None:
-            if not self.use_prefix:
-                assert self.is_decoder, "Only decoder can use `past_key_values`"
-                expected_num_past_key_values = 2 if encoder_hidden_states is None else 4
+            assert self.is_decoder, "Only decoder can use `past_key_values`"
+            expected_num_past_key_values = 2 if encoder_hidden_states is None else 4
 
-                error_message = "There should be {} past states. 2 (past / key) for self attention.{} Got {} past key / value states".format(
-                    expected_num_past_key_values,
-                    "2 (past / key) for cross attention" if expected_num_past_key_values == 4 else "",
-                    len(past_key_value),
-                )
-                assert len(past_key_value) == expected_num_past_key_values, error_message
+            error_message = "There should be {} past states. 2 (past / key) for self attention.{} Got {} past key / value states".format(
+                expected_num_past_key_values,
+                "2 (past / key) for cross attention" if expected_num_past_key_values == 4 else "",
+                len(past_key_value),
+            )
+            assert len(past_key_value) == expected_num_past_key_values, error_message
 
             self_attn_past_key_value = past_key_value[:2]
-            cross_attn_past_key_value = past_key_value[2:4]
-            if self.use_prefix:
-                encoder_attn_past_key_value = past_key_value[4:]
+            cross_attn_past_key_value = past_key_value[2:]
         else:
-            self_attn_past_key_value, cross_attn_past_key_value, encoder_attn_past_key_value = None, None, None
+            self_attn_past_key_value, cross_attn_past_key_value = None, None
 
         self_attention_outputs = self.layer[0](
             hidden_states,
             attention_mask=attention_mask,
             position_bias=position_bias,
             head_mask=head_mask,
-            past_key_value=self_attn_past_key_value if self.is_decoder else encoder_attn_past_key_value,
+            past_key_value=self_attn_past_key_value,
             use_cache=use_cache,
             output_attentions=output_attentions,
         )
@@ -795,10 +777,6 @@ class T5Stack(T5PreTrainedModel):
         self.model_parallel = False
         self.device_map = None
 
-        self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
-        self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
-        self.use_cross_prefix = False
-
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
     def parallelize(self, device_map=None):
         # Check validity of device_map
@@ -851,7 +829,6 @@ class T5Stack(T5PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        use_prefix=None,
     ):
         # Model parallel
         if self.model_parallel:
@@ -885,18 +862,13 @@ class T5Stack(T5PreTrainedModel):
         batch_size, seq_length = input_shape
 
         # required mask seq length can be calculated via length of past
-        mask_seq_length = past_key_values[0][0].shape[2] + seq_length if (past_key_values is not None and past_key_values[0][0] is not None) else seq_length
+        mask_seq_length = past_key_values[0][0].shape[2] + seq_length if past_key_values is not None else seq_length
 
         if use_cache is True:
             assert self.is_decoder, ":obj:`use_cache` can only be set to `True` if {} is used as a decoder".format(
                 self
             )
 
-        if use_prefix and not self.is_decoder and attention_mask is not None and past_key_values is not None and past_key_values[0][4] is not None:
-            extend_att_mask = torch.ones(
-                (batch_size, past_key_values[0][4].shape[2]), device=attention_mask.device, dtype=attention_mask.dtype
-            )
-            attention_mask = torch.cat([extend_att_mask, attention_mask], dim = -1)
         if attention_mask is None:
             attention_mask = torch.ones(batch_size, mask_seq_length).to(inputs_embeds.device)
         if self.is_decoder and encoder_attention_mask is None and encoder_hidden_states is not None:
@@ -904,13 +876,6 @@ class T5Stack(T5PreTrainedModel):
             encoder_attention_mask = torch.ones(
                 batch_size, encoder_seq_length, device=inputs_embeds.device, dtype=torch.long
             )
-        if (self.use_prefix and self.is_decoder and encoder_attention_mask is not None 
-            and encoder_hidden_states is not None and past_key_values is not None and past_key_values[0][2] is not None
-            and (encoder_attention_mask.shape[1] != self.preseqlen+encoder_hidden_states.shape[1] and self.use_cross_prefix)):
-            extend_att_mask = torch.ones(
-                (batch_size, self.preseqlen), device=encoder_attention_mask.device, dtype=encoder_attention_mask.dtype
-            )
-            encoder_attention_mask = torch.cat([extend_att_mask, encoder_attention_mask], dim = -1)
 
         # initialize past_key_values with `None` if past does not exist
         if past_key_values is None:
@@ -1429,7 +1394,6 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        use_prefix=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -1469,8 +1433,6 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 output_attentions=output_attentions,
                 output_hidden_states=output_hidden_states,
                 return_dict=return_dict,
-                past_key_values=past_key_values,
-                use_prefix = use_prefix,
             )
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
@@ -1490,13 +1452,12 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
 
         # If decoding with past key value states, only the last tokens
         # should be given as an input
-        if not use_prefix:
-            if past_key_values is not None:
-                assert labels is None, "Decoder should not use cached key value states when training."
-                if decoder_input_ids is not None:
-                    decoder_input_ids = decoder_input_ids[:, -1:]
-                if decoder_inputs_embeds is not None:
-                    decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
+        if past_key_values is not None:
+            assert labels is None, "Decoder should not use cached key value states when training."
+            if decoder_input_ids is not None:
+                decoder_input_ids = decoder_input_ids[:, -1:]
+            if decoder_inputs_embeds is not None:
+                decoder_inputs_embeds = decoder_inputs_embeds[:, -1:]
 
         # Set device for model parallelism
         if self.model_parallel:
@@ -1522,7 +1483,6 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
-            use_prefix = use_prefix,
         )
 
         sequence_output = decoder_outputs[0]
@@ -1569,13 +1529,6 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         # cut decoder_input_ids if past is used
         if past is not None:
             input_ids = input_ids[:, -1:]
-
-        if past is None:
-            # print('Prepare for Generation: only at the beginnning. ', kwargs['past_key_values'])
-            if 'past_key_values' in kwargs:
-                past = kwargs['past_key_values']
-            else:
-                past = None
 
         return {
             "decoder_input_ids": input_ids,

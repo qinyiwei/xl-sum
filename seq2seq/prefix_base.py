@@ -62,6 +62,9 @@ class PrefixTransformer(PreTrainedModel):
         else:
             assert False, "model_args.optim_prefix should be either yes or no"
 
+
+
+
         print(self.model_type)
         config_prefix._my_arg_tune_mode = self.hparams.tuning_mode
         config_prefix._my_arg_control = True
@@ -77,14 +80,10 @@ class PrefixTransformer(PreTrainedModel):
         config_prefix.use_cross_prefix = self.hparams.use_cross_prefix
         config_prefix.use_encoder_prefix = self.hparams.use_encoder_prefix
 
-        config_prefix.lowdata = self.hparams.lowdata
-        if config_prefix.lowdata and self.hparams.use_lowdata_token == 'yes':
-            config_prefix.lowdata_token = self.tokenizer([self.hparams.lowdata_token],
-                                                    add_prefix_space=True)['input_ids']  # return_tensors='np',
-            print(self.hparams.lowdata_token)
-            print(config_prefix.lowdata_token)
-            print(self.tokenizer.pad_token_id)
-
+        config_prefix.lowdata = self.hparams.lowdata#('lowdata' in self.hparams.output_dir)
+        config_prefix.low_data_init = self.hparams.low_data_init
+        if config_prefix.lowdata:
+            config_prefix.lowdata_token = self.hparams.lowdata_token 
         # some extra stuff.
         config_prefix.mid_dim = self.hparams.mid_dim
         

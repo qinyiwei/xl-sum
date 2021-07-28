@@ -521,7 +521,10 @@ class T5Attention(nn.Module):
         attn_output = unshape(torch.matmul(attn_weights, value_states))  # (batch_size, seq_length, dim)
         attn_output = self.o(attn_output)
 
-        present_key_value_state = (key_states, value_states) if (self.is_decoder and use_cache) else None
+        if not self.use_prefix:
+            present_key_value_state = (key_states, value_states) if (self.is_decoder and use_cache) else None
+        else:
+            present_key_value_state = (key_states, value_states) if use_cache else None
         outputs = (attn_output,) + (present_key_value_state,) + (position_bias,)
 
         if output_attentions:
@@ -887,10 +890,11 @@ class T5Stack(T5PreTrainedModel):
         # required mask seq length can be calculated via length of past
         mask_seq_length = past_key_values[0][0].shape[2] + seq_length if (past_key_values is not None and past_key_values[0][0] is not None) else seq_length
 
-        if use_cache is True:
-            assert self.is_decoder, ":obj:`use_cache` can only be set to `True` if {} is used as a decoder".format(
-                self
-            )
+        if not self.use_prefix:
+            if use_cache is True:
+                assert self.is_decoder, ":obj:`use_cache` can only be set to `True` if {} is used as a decoder".format(
+                    self
+                )
 
         if use_prefix and not self.is_decoder and attention_mask is not None and past_key_values is not None and past_key_values[0][4] is not None:
             extend_att_mask = torch.ones(

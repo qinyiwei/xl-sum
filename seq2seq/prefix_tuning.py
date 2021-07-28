@@ -100,35 +100,94 @@ class PrefixTuningT5(T5PreTrainedModel):
         print('preseqlen is {}, under the mode of optimizing prefix directly'.format(self.preseqlen))
 
 
-        # DIFFERENT PARAMETRIZATION:
-        low_data_init = 0
-        print('UNDER PARAMETRIZATION 1')
-        self.input_tokens = torch.arange(self.preseqlen).long()
-        if self.use_self_prefix:
-            self.wte = nn.Embedding(self.preseqlen, self.n_embd)
-            self.control_trans = nn.Sequential(
-                nn.Linear(self.n_embd, self.mid_dim),
-                nn.Tanh(),
-                nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+        if self.lowdata and self.lowdata_token is not None:
+                low_data_init = config.low_data_init
+                if low_data_init == 1:
+                    print('IN THE LOW DATA SETTING, EXPLORE INITIALIZATION FOR DIRECT OPTIM...')
+                    # self.control_trans = nn.Parameter(torch.randn(self.preseqlen * config.n_layer * 2 * config.n_embd))
+                    self.get_prompt = self.get_prompt_p22
+                    tokenizer = GPT2Tokenizer.from_pretrained('gpt2-medium')
+                    sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
+                    src, tgt = sample_text.split('||')
+                    sample_input = ' {} {} '.format(src, tokenizer.bos_token) + tgt + ' {}'.format(tokenizer.eos_token)
+                    self.control_trans = self.lowdata_init_train1(gpt2=model_gpt2, tokenizer=tokenizer, sample_input=sample_input)
+                    print(self.control_trans.shape)
+                elif low_data_init == 2:
+                    print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, need to train first')
+                    self.input_tokens = torch.arange(self.preseqlen).long()
+                    self.wte = nn.Embedding(self.preseqlen, config.n_embd)
+                    self.control_trans = nn.Sequential(
+                        nn.Linear(config.n_embd, self.mid_dim),
+                        nn.Tanh(),
+                        nn.Linear(self.mid_dim, config.n_layer * 2 * config.n_embd))
+                    self.get_prompt = self.get_prompt_p5
 
-        self.get_prompt = self.get_prompt_p5
+                    tokenizer = GPT2Tokenizer.from_pretrained('gpt2-medium')
+                    # sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
+                    sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
+                    src, tgt = sample_text.split('||')
+                    sample_input = ' {} {} '.format(src, tokenizer.bos_token) + tgt + ' {}'.format(tokenizer.eos_token)
 
-        if self.use_encoder_prefix:
-            self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
-            self.control_trans_enc = nn.Sequential(
-                nn.Linear(self.n_embd, self.mid_dim),
-                nn.Tanh(),
-                nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                elif low_data_init == 3:
+                    # use a single prepended token.
+                    assert self.lowdata_token is not None
+                    #self.preseqlen = len(self.lowdata_token[0])
+                    print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, low_data_init=3, '
+                          'preseqlen = {} Unifying with FINETUNE'.format(self.preseqlen))
 
-        if self.use_cross_prefix:
-            self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
-            self.control_trans2 = nn.Sequential(
-                nn.Linear(self.n_embd, self.mid_dim),
-                nn.Tanh(),
-                nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                    self.input_tokens = torch.arange(self.preseqlen).long()
+                    if self.use_self_prefix:
+                        self.wte = nn.Embedding(self.preseqlen, self.n_embd)
+                        self.control_trans = nn.Sequential(
+                            nn.Linear(self.n_embd, self.mid_dim),
+                            nn.Tanh(),
+                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
 
-        #TODO: delete this sentence after debug
-        #self.load_state_dict(torch.load("/home/yiweiq/initial_weights.ckp"))
+                    self.get_prompt = self.get_prompt_p5
+
+                    if self.use_encoder_prefix:
+                        self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
+                        self.control_trans_enc = nn.Sequential(
+                            nn.Linear(self.n_embd, self.mid_dim),
+                            nn.Tanh(),
+                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+
+                    if self.use_cross_prefix:
+                        self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
+                        self.control_trans2 = nn.Sequential(
+                            nn.Linear(self.n_embd, self.mid_dim),
+                            nn.Tanh(),
+                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+        else:
+            # DIFFERENT PARAMETRIZATION:
+            low_data_init = 0
+            print('UNDER PARAMETRIZATION 1')
+            self.input_tokens = torch.arange(self.preseqlen).long()
+            if self.use_self_prefix:
+                self.wte = nn.Embedding(self.preseqlen, self.n_embd)
+                self.control_trans = nn.Sequential(
+                    nn.Linear(self.n_embd, self.mid_dim),
+                    nn.Tanh(),
+                    nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+
+            self.get_prompt = self.get_prompt_p5
+
+            if self.use_encoder_prefix:
+                self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
+                self.control_trans_enc = nn.Sequential(
+                    nn.Linear(self.n_embd, self.mid_dim),
+                    nn.Tanh(),
+                    nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+
+            if self.use_cross_prefix:
+                self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
+                self.control_trans2 = nn.Sequential(
+                    nn.Linear(self.n_embd, self.mid_dim),
+                    nn.Tanh(),
+                    nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+
+            #TODO: delete this sentence after debug
+            #self.load_state_dict(torch.load("/home/yiweiq/initial_weights.ckp"))
 
         self.dropout = nn.Dropout(self.prefix_dropout)
 
@@ -138,6 +197,13 @@ class PrefixTuningT5(T5PreTrainedModel):
             print(param.shape)
             total_param += param.numel()
         print('total param is {}'.format(total_param))
+
+
+        if low_data_init == 2:
+            self.lowdata_init_train2(gpt2=model_gpt2, tokenizer=tokenizer, sample_input=sample_input)
+        elif low_data_init == 3:
+            print('use pt for this tensor', torch.LongTensor(self.lowdata_token))
+            self.lowdata_init_train3(gpt2=model_gpt2, sample_input=torch.LongTensor(self.lowdata_token))
 
 
     def get_prompt_p5(self, control_code=None, gpt2=None, bsz=None, sample_size=1):
@@ -222,6 +288,85 @@ class PrefixTuningT5(T5PreTrainedModel):
         #return None
         return result
 
+
+    def get_encoder_output(self, gpt2, temp_input):
+        return gpt2.encoder(temp_input,use_cache=True).past_key_values
+
+    def lowdata_init_train3(self, gpt2, sample_input, epochs=200): # prev=500
+        self = self.cuda()
+        gpt2 = gpt2.cuda()
+        with torch.no_grad():
+            src_ids = sample_input.to(gpt2.device)
+            tgt_ids = sample_input.to(gpt2.device)
+            decoder_input_ids = gpt2._shift_right(tgt_ids)
+            print(decoder_input_ids.shape, decoder_input_ids)
+
+
+            for i in range(decoder_input_ids.size(-1)):
+                output = gpt2(src_ids, decoder_input_ids=decoder_input_ids[:, :i+1], use_cache=True,
+                               use_prefix=False, return_dict=True)
+                output = output.past_key_values
+
+            if self.use_self_prefix:
+                self_full_key = torch.cat([ll[0] for ll in output])
+                self_full_val = torch.cat([ll[1] for ll in output])
+                self_full = torch.cat([self_full_val, self_full_key])
+                print('gold self', self_full.shape)
+
+            if self.use_cross_prefix:
+                encdec_full_key = torch.cat([ll[2] for ll in output])
+                encdec_full_val = torch.cat([ll[3] for ll in output])
+                encdec_full = torch.cat([encdec_full_val, encdec_full_key])
+                print('gold_encdec', encdec_full.shape)
+
+            if self.use_encoder_prefix:
+                encoder_full_past = self.get_encoder_output(gpt2, src_ids)
+                encoder_full_key = torch.cat([ll[0] for ll in encoder_full_past])
+                encoder_full_val = torch.cat([ll[1] for ll in encoder_full_past])
+                encoder_full = torch.cat([encoder_full_val, encoder_full_key])
+                print('gold_encoder', encdec_full.shape)
+
+
+        list_param = self.parameters()
+        # print(list_param)
+        optimizer_temp = torch.optim.Adam(list_param, lr=0.00003)
+
+        for e in range(epochs):
+            our_prompt = self.get_prompt_p5(bsz=1)
+            if self.use_self_prefix:
+                self_our_key = torch.cat([ll[0] for ll in our_prompt])
+                self_our_val = torch.cat([ll[1] for ll in our_prompt])
+                self_our = torch.cat([self_our_val, self_our_key])
+                # print('our_self', self_our.shape)
+
+            if self.use_cross_prefix:
+                encdec_our_key = torch.cat([ll[2] for ll in our_prompt])
+                encdec_our_val = torch.cat([ll[3] for ll in our_prompt])
+                encdec_our = torch.cat([encdec_our_val, encdec_our_key])
+                # print(encdec_full.shape, encdec_our.shape)
+                # print('our_encdec', encdec_our.shape)
+
+            if self.use_encoder_prefix:
+                encoder_our_key = torch.cat([ll[4] for ll in our_prompt])
+                encoder_our_val = torch.cat([ll[5] for ll in our_prompt])
+                encoder_our = torch.cat([encoder_our_val, encoder_our_key])
+                # print('our_encoder', encoder_our.shape)
+
+            # our_prompt = torch.cat(our_prompt, dim=0)
+            loss_metrics = nn.MSELoss()
+            loss = 0
+            if self.use_self_prefix:
+                loss += loss_metrics(self_our.to(gpt2.device), self_full)
+            if self.use_cross_prefix:
+                loss += loss_metrics(encdec_our.to(gpt2.device), encdec_full)
+            if self.use_encoder_prefix:
+                loss += loss_metrics(encoder_our.to(gpt2.device), encoder_full )
+            print(loss)
+            loss.backward()
+            optimizer_temp.step()
+            #self.control_trans.zero_grad()
+            self.zero_grad()
+        return
 
     def forward(self,
         input_ids=None,

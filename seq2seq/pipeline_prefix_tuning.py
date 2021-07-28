@@ -96,7 +96,8 @@ class ModelArguments:
     use_self_prefix: bool = field(default=False, metadata={"help": "Whether to use self prefix."})
     use_cross_prefix: bool = field(default=False, metadata={"help": "Whether to use cross prefix."})
     load_whole_model: bool = field(default=False, metadata={"help": "Whether to load the whole model or only the prefix parameters."})
-
+    lowdata: bool = field(default=False, metadata={"help": "Whether to lowdata or not."})
+    low_data_init: int = field(default=3, metadata={"help": "how to initialize prefix."})   
 
 @dataclass
 class OtherArguments:
@@ -264,18 +265,6 @@ def main():
             assert hasattr(config, p), f"({config.__class__.__name__}) doesn't have a `{p}` attribute"
             setattr(config, p, getattr(training_args, p))
 
-    if model_args.tuning_mode == 'prefixtune':
-        config.preseqlen = model_args.preseqlen
-        config.use_prefix = True
-        config.use_self_prefix = model_args.use_self_prefix
-        config.use_cross_prefix = model_args.use_cross_prefix
-        config.use_encoder_prefix = model_args.use_encoder_prefix
-
-    tokenizer = AutoTokenizer.from_pretrained(
-        model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
-        use_fast=False, cache_dir=model_args.cache_dir,
-    )
-
     if config.model_type != "mbart":
         tokenizer = AutoTokenizer.from_pretrained(
             model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
@@ -289,7 +278,20 @@ def main():
             tgt_lang=model_args.tgt_lang,
         )
     
-
+    if model_args.tuning_mode == 'prefixtune':
+        if model_args.lowdata:
+            lowdata_token = tokenizer([model_args.lowdata_token])['input_ids']  # return_tensors='np',
+            if model_args.low_data_init == 3:
+                model_args.preseqlen = len(lowdata_token[0])
+            print(model_args.preseqlen)
+            print(model_args.lowdata_token)
+            print(lowdata_token)
+            model_args.lowdata_token = lowdata_token
+        config.preseqlen = model_args.preseqlen
+        config.use_prefix = True
+        config.use_self_prefix = model_args.use_self_prefix
+        config.use_cross_prefix = model_args.use_cross_prefix
+        config.use_encoder_prefix = model_args.use_encoder_prefix
 
     if model_args.is_encoder_decoder:
         seq2seq_model = EncoderDecoderModel.from_encoder_decoder_pretrained(model_args.model_name_or_path, 

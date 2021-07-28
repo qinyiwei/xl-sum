@@ -41,7 +41,7 @@ from utils import (
 
 from tqdm import tqdm
 from torch.utils.data import DataLoader, SequentialSampler
-
+from prefix_model import PrefixSummarizationModule
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,38 @@ class ModelArguments:
         default=False,
         metadata={"help": "tie encoder decoder"},
     )
+    eval_beams: Optional[int] = field(default=4, metadata={"help": "# num_beams to use for evaluation."})
+
+    #For prefix model
+    prefixModel_name_or_path: Optional[str] = field(
+        default=None,
+        metadata={"help":"Path to pretrained prefix model or model identifier from huggingface.co/models."},
+    )
+    prefix_mode: str = field(default='activation', metadata={"help": "embedding or activation."})         
+    preseqlen: int = field(default=200, metadata={"help": "the length of the prefix."})   
+    optim_prefix: str = field(default='yes', metadata={"help": "use the task specific optimization of the prefix."})   
+    tuning_mode: str = field(default='prefixtune', metadata={"help": "Could be prefixtune or finetune."})       
+    prefix_dropout: float = field(default=0.0, metadata={"help": "the dropout rate for our prefix model."})         
+    mid_dim: int = field(default=800, metadata={"help": "the dimension of the intermediate layer.",})   
+    format_mode: str = field(default='cat', metadata={"help": "whether to look at the input again, including [infix, cat, peek, nopeek]"}) 
+    lowdata: bool = field(default=False, metadata={"help": "whether or not to use lowdata."})     
+    use_lowdata_token: str = field(default='yes', metadata={"help": "whether or not to use the lowdata token."})   
+    lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."})   
+    use_encoder_prefix: bool = field(default=False, metadata={"help": "Whether to use encoder prefix."})
+    use_self_prefix: bool = field(default=False, metadata={"help": "Whether to use self prefix."})
+    use_cross_prefix: bool = field(default=False, metadata={"help": "Whether to use cross prefix."})
+    load_whole_model: bool = field(default=False, metadata={"help": "Whether to load the whole model or only the prefix parameters."})
 
 
+@dataclass
+class OtherArguments:
+    val_metric: str = field(default=None, metadata={"help": "choices=[bleu, rouge2, loss, None]"})
+    save_top_k: int = field(default=1, metadata={"help":"How many checkpoints to save."})
+    early_stopping_patience: int = field(
+        default=-1, 
+        metadata={"help": "-1 means never early stop. early_stopping_patience is measured in \
+        validation checks, not epochs. So val_check_interval will effect it."}
+    )
 
 @dataclass
 class DataTrainingArguments:
@@ -126,7 +156,6 @@ class DataTrainingArguments:
     n_test: Optional[int] = field(default=-1, metadata={"help": "# test examples. -1 means use all."})
     src_lang: Optional[str] = field(default=None, metadata={"help": "Source language id for translation."})
     tgt_lang: Optional[str] = field(default=None, metadata={"help": "Target language id for translation."})
-    eval_beams: Optional[int] = field(default=4, metadata={"help": "# num_beams to use for evaluation."})
     length_penalty: Optional[float] = field(default=0.6, metadata={"help": "# length_penalty"})
     no_repeat_ngram_size: Optional[int] = field(default=None, metadata={"help": "# num_beams to use for evaluation."})
     upsampling_factor: Optional[float] = field(default=None, 
@@ -171,15 +200,15 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, OtherArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
     
     
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, other_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, other_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     
     check_output_dir(training_args)
@@ -217,8 +246,8 @@ def main():
     config_kwargs = {}
     if data_args.max_target_length:
         config_kwargs.update({'max_length': data_args.max_target_length})
-    if data_args.eval_beams:
-        config_kwargs.update({'num_beams': data_args.eval_beams})
+    if model_args.eval_beams:
+        config_kwargs.update({'num_beams': model_args.eval_beams})
     if data_args.length_penalty:
         config_kwargs.update({'length_penalty': data_args.length_penalty})
     if data_args.no_repeat_ngram_size:
@@ -235,44 +264,83 @@ def main():
             assert hasattr(config, p), f"({config.__class__.__name__}) doesn't have a `{p}` attribute"
             setattr(config, p, getattr(training_args, p))
 
+    if model_args.tuning_mode == 'prefixtune':
+        config.preseqlen = model_args.preseqlen
+        config.use_prefix = True
+        config.use_self_prefix = model_args.use_self_prefix
+        config.use_cross_prefix = model_args.use_cross_prefix
+        config.use_encoder_prefix = model_args.use_encoder_prefix
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
         use_fast=False, cache_dir=model_args.cache_dir,
     )
+
+    if config.model_type != "mbart":
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+            use_fast=False, cache_dir=model_args.cache_dir,
+        )
+    else:
+        tokenizer = MBartTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            src_lang=model_args.src_lang,
+            tgt_lang=model_args.tgt_lang,
+        )
     
+
+
     if model_args.is_encoder_decoder:
-        model = EncoderDecoderModel.from_encoder_decoder_pretrained(model_args.model_name_or_path, 
+        seq2seq_model = EncoderDecoderModel.from_encoder_decoder_pretrained(model_args.model_name_or_path, 
             model_args.model_name_or_path, tie_encoder_decoder=model_args.tie_encoder_decoder,
             cache_dir=model_args.cache_dir
         )
         # just to be safe
         tokenizer.bos_token = tokenizer.cls_token if tokenizer.cls_token is not None else tokenizer.bos_token
         tokenizer.eos_token = tokenizer.sep_token if tokenizer.sep_token is not None else tokenizer.eos_token
-        model.config.decoder_start_token_id = tokenizer.bos_token_id
-        model.config.eos_token_id = tokenizer.eos_token_id
-        model.config.pad_token_id = tokenizer.pad_token_id
-        model.config.vocab_size = model.config.decoder.vocab_size
-        model.config.update(config_kwargs)
-        model.config.encoder.update(config_kwargs)
-        model.config.decoder.update(config_kwargs)
-        model.config.decoder.is_decoder = True
-        model.config.decoder.add_cross_attention = True
-        config = model.config
+        seq2seq_model.config.decoder_start_token_id = tokenizer.bos_token_id
+        seq2seq_model.config.eos_token_id = tokenizer.eos_token_id
+        seq2seq_model.config.pad_token_id = tokenizer.pad_token_id
+        seq2seq_model.config.vocab_size = seq2seq_model.config.decoder.vocab_size
+        seq2seq_model.config.update(config_kwargs)
+        seq2seq_model.config.encoder.update(config_kwargs)
+        seq2seq_model.config.decoder.update(config_kwargs)
+        seq2seq_model.config.decoder.is_decoder = True
+        seq2seq_model.config.decoder.add_cross_attention = True
+        config = seq2seq_model.config
         
     else:
-        model = AutoModelForSeq2SeqLM.from_pretrained(
+        seq2seq_model = AutoModelForSeq2SeqLM.from_pretrained(
             model_args.model_name_or_path,
             from_tf=".ckpt" in model_args.model_name_or_path,
             config=config,
             cache_dir=model_args.cache_dir,
         )
+
+    if model_args.prefixModel_name_or_path is not None and model_args.load_whole_model:
+        model = PrefixSummarizationModule.from_pretrained(model_args.prefixModel_name_or_path,
+                            from_tf=bool(".ckpt" in model_args.prefixModel_name_or_path),
+                            cache_dir=model_args.cache_dir,
+                            hparams=model_args, 
+                            config=config, 
+                            tokenizer=tokenizer, 
+                            seq2seq_model=seq2seq_model)
+    else:
+        if model_args.tuning_mode == 'prefixtune':
+            model = PrefixSummarizationModule(config=config, hparams=model_args,  tokenizer=tokenizer, seq2seq_model=seq2seq_model)
+        else:
+            model = seq2seq_model
+
+
     # use task specific params
     use_task_specific_params(model, data_args.task)
+    if model_args.tuning_mode == 'prefixtune':
+        use_task_specific_params(model.seq2seq_model, data_args.task)
 
     # set num_beams for evaluation
-    if data_args.eval_beams is None:
-        data_args.eval_beams = model.config.num_beams
+    if model_args.eval_beams is None:
+        model_args.eval_beams = model.config.num_beams
 
     # set decoder_start_token_id for MBart
     if model.config.decoder_start_token_id is None and isinstance(tokenizer, MBartTokenizer):
@@ -286,7 +354,11 @@ def main():
     if model_args.freeze_encoder:
         freeze_params(model.get_encoder())
         assert_all_frozen(model.get_encoder())
-    
+    if model_args.tuning_mode == 'prefixtune':
+        freeze_params(model.seq2seq_model)
+        assert_all_frozen(model.seq2seq_model)
+        print('FREEZING ENTIRE seq2seq model.')
+
     total_train_batch_size = (
         training_args.train_batch_size
         * training_args.gradient_accumulation_steps
@@ -464,7 +536,7 @@ def main():
         logger.info("*** Evaluate ***")
 
         metrics = trainer.evaluate(
-            metric_key_prefix="val", max_length=data_args.val_max_target_length, num_beams=data_args.eval_beams
+            metric_key_prefix="val", max_length=data_args.val_max_target_length, num_beams=model_args.eval_beams
         )
         metrics["val_n_objs"] = data_args.n_val
         metrics["val_loss"] = round(metrics["val_loss"], 4)
@@ -481,7 +553,7 @@ def main():
             test_dataset=test_dataset,
             metric_key_prefix="test",
             max_length=data_args.val_max_target_length,
-            num_beams=data_args.eval_beams,
+            num_beams=model_args.eval_beams,
             length_penalty=data_args.length_penalty,
             no_repeat_ngram_size=data_args.no_repeat_ngram_size,
         )

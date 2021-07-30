@@ -66,6 +66,7 @@ class PrefixTransformer(PreTrainedModel):
 
 
         print(self.model_type)
+        config_prefix.prefixModel_name_or_path = self.hparams.prefixModel_name_or_path
         config_prefix._my_arg_tune_mode = self.hparams.tuning_mode
         config_prefix._my_arg_control = True
         config_prefix.train_weights = False

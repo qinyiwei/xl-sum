@@ -101,63 +101,39 @@ class PrefixTuningT5(T5PreTrainedModel):
 
 
         if self.lowdata and self.lowdata_token is not None:
-                low_data_init = config.low_data_init
-                if low_data_init == 1:
-                    print('IN THE LOW DATA SETTING, EXPLORE INITIALIZATION FOR DIRECT OPTIM...')
-                    # self.control_trans = nn.Parameter(torch.randn(self.preseqlen * config.n_layer * 2 * config.n_embd))
-                    self.get_prompt = self.get_prompt_p22
-                    tokenizer = GPT2Tokenizer.from_pretrained('gpt2-medium')
-                    sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
-                    src, tgt = sample_text.split('||')
-                    sample_input = ' {} {} '.format(src, tokenizer.bos_token) + tgt + ' {}'.format(tokenizer.eos_token)
-                    self.control_trans = self.lowdata_init_train1(gpt2=model_gpt2, tokenizer=tokenizer, sample_input=sample_input)
-                    print(self.control_trans.shape)
-                elif low_data_init == 2:
-                    print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, need to train first')
-                    self.input_tokens = torch.arange(self.preseqlen).long()
-                    self.wte = nn.Embedding(self.preseqlen, config.n_embd)
+            low_data_init = config.low_data_init
+            if low_data_init == 3:
+                # use a single prepended token.
+                assert self.lowdata_token is not None
+                #self.preseqlen = len(self.lowdata_token[0])
+                print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, low_data_init=3, '
+                        'preseqlen = {} Unifying with FINETUNE'.format(self.preseqlen))
+
+                self.input_tokens = torch.arange(self.preseqlen).long()
+                if self.use_self_prefix:
+                    self.wte = nn.Embedding(self.preseqlen, self.n_embd)
                     self.control_trans = nn.Sequential(
-                        nn.Linear(config.n_embd, self.mid_dim),
+                        nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
-                        nn.Linear(self.mid_dim, config.n_layer * 2 * config.n_embd))
-                    self.get_prompt = self.get_prompt_p5
+                        nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
 
-                    tokenizer = GPT2Tokenizer.from_pretrained('gpt2-medium')
-                    # sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
-                    sample_text = 'name : Blue Spice | Type : coffee shop | customer rating : 5 out of 5 | near : Crowne Plaza Hotel||The coffee shop Blue Spice is based near Crowne Plaza Hotel and has a high customer rating of 5 out of 5 .'
-                    src, tgt = sample_text.split('||')
-                    sample_input = ' {} {} '.format(src, tokenizer.bos_token) + tgt + ' {}'.format(tokenizer.eos_token)
+                self.get_prompt = self.get_prompt_p5
 
-                elif low_data_init == 3:
-                    # use a single prepended token.
-                    assert self.lowdata_token is not None
-                    #self.preseqlen = len(self.lowdata_token[0])
-                    print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, low_data_init=3, '
-                          'preseqlen = {} Unifying with FINETUNE'.format(self.preseqlen))
+                if self.use_encoder_prefix:
+                    self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
+                    self.control_trans_enc = nn.Sequential(
+                        nn.Linear(self.n_embd, self.mid_dim),
+                        nn.Tanh(),
+                        nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
 
-                    self.input_tokens = torch.arange(self.preseqlen).long()
-                    if self.use_self_prefix:
-                        self.wte = nn.Embedding(self.preseqlen, self.n_embd)
-                        self.control_trans = nn.Sequential(
-                            nn.Linear(self.n_embd, self.mid_dim),
-                            nn.Tanh(),
-                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
-
-                    self.get_prompt = self.get_prompt_p5
-
-                    if self.use_encoder_prefix:
-                        self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
-                        self.control_trans_enc = nn.Sequential(
-                            nn.Linear(self.n_embd, self.mid_dim),
-                            nn.Tanh(),
-                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
-
-                    if self.use_cross_prefix:
-                        self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
-                        self.control_trans2 = nn.Sequential(
-                            nn.Linear(self.n_embd, self.mid_dim),
-                            nn.Tanh(),
-                            nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                if self.use_cross_prefix:
+                    self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
+                    self.control_trans2 = nn.Sequential(
+                        nn.Linear(self.n_embd, self.mid_dim),
+                        nn.Tanh(),
+                        nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+            else:
+                assert False, "not surpport low_data_init={}".format(low_data_init)
         else:
             # DIFFERENT PARAMETRIZATION:
             low_data_init = 0
@@ -199,12 +175,13 @@ class PrefixTuningT5(T5PreTrainedModel):
         print('total param is {}'.format(total_param))
 
 
-        if low_data_init == 2:
-            self.lowdata_init_train2(gpt2=model_gpt2, tokenizer=tokenizer, sample_input=sample_input)
-        elif low_data_init == 3:
-            print('use pt for this tensor', torch.LongTensor(self.lowdata_token))
-            self.lowdata_init_train3(gpt2=model_gpt2, sample_input=torch.LongTensor(self.lowdata_token))
-
+        if config.prefixModel_name_or_path is None:
+            if low_data_init == 3:
+                print('use pt for this tensor', torch.LongTensor(self.lowdata_token))
+                self.lowdata_init_train3(gpt2=model_gpt2, sample_input=torch.LongTensor(self.lowdata_token))
+            else:
+                if low_data_init != 0:
+                    assert False, "not surpport low_data_init={}".format(low_data_init)
 
     def get_prompt_p5(self, control_code=None, gpt2=None, bsz=None, sample_size=1):
         old_bsz = bsz

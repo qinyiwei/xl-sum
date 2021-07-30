@@ -158,7 +158,7 @@ class DataTrainingArguments:
     src_lang: Optional[str] = field(default=None, metadata={"help": "Source language id for translation."})
     tgt_lang: Optional[str] = field(default=None, metadata={"help": "Target language id for translation."})
     length_penalty: Optional[float] = field(default=0.6, metadata={"help": "# length_penalty"})
-    no_repeat_ngram_size: Optional[int] = field(default=None, metadata={"help": "# num_beams to use for evaluation."})
+    no_repeat_ngram_size: Optional[int] = field(default=2, metadata={"help": "# num_beams to use for evaluation."})
     upsampling_factor: Optional[float] = field(default=None, 
         metadata={"help": "# use data upsampling factor only when using multiple data files."}
     )

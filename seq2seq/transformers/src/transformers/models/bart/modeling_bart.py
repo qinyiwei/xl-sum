@@ -968,6 +968,7 @@ class BartDecoder(BartPretrainedModel):
             attention_mask = input_ids.ne(self.config.pad_token_id).to(torch.long)
             # never mask leading token, even if it is pad
             attention_mask[:, 0] = attention_mask[:, 1]
+        if attention_mask is not None:
             if past_key_values_length > 0:
                 attention_mask = torch.cat(
                     [

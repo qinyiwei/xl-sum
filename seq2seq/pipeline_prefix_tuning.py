@@ -42,6 +42,7 @@ from utils import (
 from tqdm import tqdm
 from torch.utils.data import DataLoader, SequentialSampler
 from prefix_model import PrefixSummarizationModule
+import math
 
 logger = logging.getLogger(__name__)
 
@@ -89,25 +90,15 @@ class ModelArguments:
     prefix_dropout: float = field(default=0.0, metadata={"help": "the dropout rate for our prefix model."})         
     mid_dim: int = field(default=800, metadata={"help": "the dimension of the intermediate layer.",})   
     format_mode: str = field(default='cat', metadata={"help": "whether to look at the input again, including [infix, cat, peek, nopeek]"}) 
-    lowdata: bool = field(default=False, metadata={"help": "whether or not to use lowdata."})     
-    use_lowdata_token: str = field(default='yes', metadata={"help": "whether or not to use the lowdata token."})   
-    lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."})   
+
     use_encoder_prefix: bool = field(default=False, metadata={"help": "Whether to use encoder prefix."})
     use_self_prefix: bool = field(default=False, metadata={"help": "Whether to use self prefix."})
     use_cross_prefix: bool = field(default=False, metadata={"help": "Whether to use cross prefix."})
     load_whole_model: bool = field(default=False, metadata={"help": "Whether to load the whole model or only the prefix parameters."})
-    lowdata: bool = field(default=False, metadata={"help": "Whether to lowdata or not."})
     low_data_init: int = field(default=3, metadata={"help": "how to initialize prefix."})   
-
-@dataclass
-class OtherArguments:
-    val_metric: str = field(default=None, metadata={"help": "choices=[bleu, rouge2, loss, None]"})
-    save_top_k: int = field(default=1, metadata={"help":"How many checkpoints to save."})
-    early_stopping_patience: int = field(
-        default=-1, 
-        metadata={"help": "-1 means never early stop. early_stopping_patience is measured in \
-        validation checks, not epochs. So val_check_interval will effect it."}
-    )
+    lowdata: bool = field(default=False, metadata={"help": "whether or not to use lowdata."})     
+    lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."}) 
+    lowdata_output_token: str = field(default=None, metadata={"help": "the low data token to use."})   
 
 @dataclass
 class DataTrainingArguments:
@@ -201,15 +192,15 @@ def main():
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
 
-    parser = HfArgumentParser((ModelArguments, OtherArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, Seq2SeqTrainingArguments))
     
     
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
         # let's parse it to get our arguments.
-        model_args, other_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
+        model_args, data_args, training_args = parser.parse_json_file(json_file=os.path.abspath(sys.argv[1]))
     else:
-        model_args, other_args, data_args, training_args = parser.parse_args_into_dataclasses()
+        model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
     
     check_output_dir(training_args)
@@ -271,22 +262,57 @@ def main():
             use_fast=False, cache_dir=model_args.cache_dir,
         )
     else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+            use_fast=False, cache_dir=model_args.cache_dir,
+        )
+        '''tokenizer = MBartTokenizer.from_pretrained(
+            model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
+            cache_dir=model_args.cache_dir,
+            #src_lang=data_args.src_lang,
+            #tgt_lang=data_args.tgt_lang,
+        )'''
+        '''
         tokenizer = MBartTokenizer.from_pretrained(
             model_args.tokenizer_name if model_args.tokenizer_name else model_args.model_name_or_path,
             cache_dir=model_args.cache_dir,
-            src_lang=model_args.src_lang,
-            tgt_lang=model_args.tgt_lang,
-        )
+            src_lang=data_args.src_lang,
+            tgt_lang=data_args.tgt_lang,
+        )'''
     
     if model_args.tuning_mode == 'prefixtune':
         if model_args.lowdata:
             lowdata_token = tokenizer([model_args.lowdata_token])['input_ids']  # return_tensors='np',
-            if model_args.low_data_init == 3:
+            if model_args.low_data_init == 3:#make preselen same as lowdata_token
                 model_args.preseqlen = len(lowdata_token[0])
+            if model_args.low_data_init == 2:
+                #repeart lowdata_token until it is preseqlen
+                if len(lowdata_token[0]) < model_args.preseqlen:
+                    #lowdata_token += lowdata_token
+                    repeat_token = math.ceil(model_args.preseqlen/len(lowdata_token[0]))*lowdata_token
+                    cat_token =[]
+                    for i in repeat_token:
+                        cat_token.extend(i)
+                    lowdata_token[0] = cat_token 
+                #trucate lodata_token until it is preseqlen
+                if len(lowdata_token[0]) > model_args.preseqlen:
+                    lowdata_token[0] = lowdata_token[0][:model_args.preseqlen]
+            if model_args.low_data_init == 1:
+                assert model_args.lowdata_output_token is not None, "low_data_init=1, need specify lowdata_output_token"
+                lowdata_output_token = tokenizer([model_args.lowdata_output_token])['input_ids']
+            print("preseqlen is:")
             print(model_args.preseqlen)
+            print("lowdata_token is:")
             print(model_args.lowdata_token)
+            print("lowdata_token after tokenization is:")
             print(lowdata_token)
+            if model_args.low_data_init == 1:
+                print("lowdata_output_token is:")
+                print(model_args.lowdata_output_token)
+                print("lowdata_output_token after tokenization is:")
+                print(lowdata_output_token)
             model_args.lowdata_token = lowdata_token
+            model_args.lowdata_output_token = lowdata_output_token if model_args.low_data_init == 1 else None
         config.preseqlen = model_args.preseqlen
         config.use_prefix = True
         config.use_self_prefix = model_args.use_self_prefix
@@ -321,6 +347,7 @@ def main():
         )
 
     if model_args.prefixModel_name_or_path is not None and model_args.load_whole_model:
+        print("load whole model from {}".format(model_args.prefixModel_name_or_path))
         model = PrefixSummarizationModule.from_pretrained(model_args.prefixModel_name_or_path,
                             from_tf=bool(".ckpt" in model_args.prefixModel_name_or_path),
                             cache_dir=model_args.cache_dir,

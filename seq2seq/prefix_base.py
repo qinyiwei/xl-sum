@@ -4,8 +4,6 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 
-import pytorch_lightning as pl
-from pytorch_lightning.utilities import rank_zero_info
 from torch import nn
 
 from transformers import (
@@ -15,7 +13,7 @@ from transformers import (
     PreTrainedModel,
 )
 
-from prefix_tuning import PrefixTuningT5
+from prefix_tuning import PrefixTuningT5,PrefixTuning
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +83,7 @@ class PrefixTransformer(PreTrainedModel):
         config_prefix.low_data_init = self.hparams.low_data_init
         if config_prefix.lowdata:
             config_prefix.lowdata_token = self.hparams.lowdata_token 
+            config_prefix.lowdata_output_token = self.hparams.lowdata_output_token
         # some extra stuff.
         config_prefix.mid_dim = self.hparams.mid_dim
         
@@ -92,12 +91,11 @@ class PrefixTransformer(PreTrainedModel):
         if self.hparams.prefixModel_name_or_path is not None and not self.hparams.load_whole_model:
             print('loading from {}'.format(hparams.prefixModel_name_or_path))
             if self.model_type == 'bart' or self.model_type == "mbart":
-                raise NotImplemented
-                '''self.model = PrefixTuning.from_pretrained(self.hparams.prefixModel_name_or_path,
+                self.model = PrefixTuning.from_pretrained(self.hparams.prefixModel_name_or_path,
                             from_tf=bool(".ckpt" in self.hparams.prefixModel_name_or_path),
                             cache_dir=cache_dir,
                             config=config_prefix,
-                            model_gpt2=self.seq2seq_model)'''
+                            model_gpt2=self.seq2seq_model)
             elif self.model_type == 'mt5' or self.model_type == 't5':
                 self.model = PrefixTuningT5.from_pretrained(self.hparams.prefixModel_name_or_path,
                             from_tf=bool(".ckpt" in self.hparams.prefixModel_name_or_path),
@@ -108,37 +106,9 @@ class PrefixTransformer(PreTrainedModel):
                 assert False, "do not support model type:{}".format(self.model_type)
         else:
             if self.model_type == "bart" or self.model_type == "mbart":
-                raise NotImplemented
-                #self.model = PrefixTuning(config_prefix, self.seq2seq_model)
+                self.model = PrefixTuning(config_prefix, self.seq2seq_model)
             elif self.model_type == "mt5" or self.model_type == 't5':
                 self.model = PrefixTuningT5(config_prefix, self.seq2seq_model)
             else:
                 assert False, "do not support model type:{}".format(self.model_type)
     
-
-
-
-class LoggingCallback(pl.Callback):
-    def on_batch_end(self, trainer, pl_module):
-        lr_scheduler = trainer.lr_schedulers[0]["scheduler"]
-        lrs = {f"lr_group_{i}": lr for i, lr in enumerate(lr_scheduler.get_lr())}
-        pl_module.logger.log_metrics(lrs)
-
-    def on_validation_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        rank_zero_info("***** Validation results *****")
-        metrics = trainer.callback_metrics
-        # Log results
-        for key in sorted(metrics):
-            if key not in ["log", "progress_bar"]:
-                rank_zero_info("{} = {}\n".format(key, str(metrics[key])))
-
-    def on_test_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
-        rank_zero_info("***** Test results *****")
-        metrics = trainer.callback_metrics
-        # Log and save results to file
-        output_test_results_file = os.path.join(pl_module.hparams.output_dir, "test_results.txt")
-        with open(output_test_results_file, "w") as writer:
-            for key in sorted(metrics):
-                if key not in ["log", "progress_bar"]:
-                    rank_zero_info("{} = {}\n".format(key, str(metrics[key])))
-                    writer.write("{} = {}\n".format(key, str(metrics[key])))

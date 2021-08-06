@@ -95,6 +95,7 @@ class ModelArguments:
     use_self_prefix: bool = field(default=False, metadata={"help": "Whether to use self prefix."})
     use_cross_prefix: bool = field(default=False, metadata={"help": "Whether to use cross prefix."})
     load_whole_model: bool = field(default=False, metadata={"help": "Whether to load the whole model or only the prefix parameters."})
+    init_train_epoch: int = field(default=800, metadata={"help": "Epochs to train when use low data initialization."})   
     low_data_init: int = field(default=3, metadata={"help": "how to initialize prefix."})   
     lowdata: bool = field(default=False, metadata={"help": "whether or not to use lowdata."})     
     lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."}) 

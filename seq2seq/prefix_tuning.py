@@ -183,7 +183,8 @@ class PrefixTuningT5(T5PreTrainedModel):
             if low_data_init == 3 or low_data_init == 2 or low_data_init==1:
                 print('use pt for this tensor', torch.LongTensor(self.lowdata_token))
                 self.lowdata_init_train3(gpt2=model_gpt2, sample_input=torch.LongTensor(self.lowdata_token),
-                    sample_output=torch.LongTensor(self.lowdata_output_token) if self.lowdata_output_token is not None else None)
+                    sample_output=torch.LongTensor(self.lowdata_output_token) if self.lowdata_output_token is not None else None,
+                    epochs = config.init_train_epoch)
             else:
                 if low_data_init != 0:
                     assert False, "not surpport low_data_init={}".format(low_data_init)
@@ -274,7 +275,7 @@ class PrefixTuningT5(T5PreTrainedModel):
     def get_encoder_output(self, gpt2, temp_input):
         return gpt2.encoder(temp_input,use_cache=True).past_key_values
 
-    def lowdata_init_train3(self, gpt2, sample_input, sample_output=None, epochs=500): # prev=200
+    def lowdata_init_train3(self, gpt2, sample_input, sample_output=None, epochs=800): # prev=200
         self = self.cuda()
         gpt2 = gpt2.cuda()
         with torch.no_grad():
@@ -374,6 +375,8 @@ class PrefixTuningT5(T5PreTrainedModel):
         else:
             past_key_values = past_key_values_prompt
 
+        #past_key_values = past_key_values.to(input_ids.device)
+        past_key_values = [[matrix.to(input_ids.device) for matrix in layer] for layer in past_key_values]
         if gpt2_model is None:
             assert False, "Didn't specify gpt2 model"
 

@@ -26,8 +26,9 @@ export label_smoothing_factor=0.1
 export seed=1234
 
 # input / output settings
-export input_dir="XLSum_input/individual/bengali"
-export output_dir="XLSum_output/individual/bengali"
+export language="bengali"
+export input_dir="/home/yiweiq/data/XLSum_input/individual/${language}"
+export output_dir="/home/yiweiq/PrefixTuning_data/XLSum_output/individual/${language}"
 
 # batch / sequence sizes
 export PER_DEVICE_TRAIN_BATCH_SIZE=2
@@ -57,6 +58,6 @@ python ./pipeline.py \
     --max_source_length $MAX_SOURCE_LENGTH --max_target_length $MAX_TARGET_LENGTH --logging_steps $logging_steps \
     --val_max_target_length $VAL_MAX_TARGET_LENGTH --seed $seed --overwrite_output_dir \
     --num_train_epochs=$num_train_epochs --max_steps $max_steps --save_steps $save_steps \
-    --evaluation_strategy $evaluation_strategy --predict_with_generate --do_train --do_eval \
+    --evaluation_strategy $evaluation_strategy --predict_with_generate --do_train --do_eval --rouge_lang $language \
     $(echo ${optional_arguments[@]})
 

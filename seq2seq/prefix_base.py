@@ -78,6 +78,7 @@ class PrefixTransformer(PreTrainedModel):
         config_prefix.use_self_prefix = self.hparams.use_self_prefix
         config_prefix.use_cross_prefix = self.hparams.use_cross_prefix
         config_prefix.use_encoder_prefix = self.hparams.use_encoder_prefix
+        config_prefix.init_train_epoch = self.hparams.init_train_epoch
 
         config_prefix.lowdata = self.hparams.lowdata#('lowdata' in self.hparams.output_dir)
         config_prefix.low_data_init = self.hparams.low_data_init

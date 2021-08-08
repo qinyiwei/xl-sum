@@ -138,7 +138,9 @@ class MultiDataset(Dataset):
         extension = "tokenized" if dataset_class == TokenizedDataset else "source"
         # identify all source training files
         datasets = []
-        for src_file in glob.glob(os.path.join(data_dir, f'*{type_path}.{extension}')):
+        source_files = glob.glob(os.path.join(data_dir, f'*{type_path}.{extension}'))
+        source_files.sort()
+        for src_file in source_files:
             type_path = "".join(os.path.basename(src_file).rsplit(f".{extension}", 1))
             dataset = dataset_class(
                 tokenizer,
@@ -222,6 +224,7 @@ class MultiDataset(Dataset):
             self.shift_iterator(self.current_dataset_idx, self.total_batch_size - self.current_loader_count - self.pos_shift_count)
             self.current_loader_count = 0
 
+        datapoint[0]['lang_id'] = self.current_dataset_idx
         return datapoint[0]
 
 
@@ -450,6 +453,7 @@ class Seq2SeqDataCollator:
         self.padding = padding if padding is not None else ("max_length" if self.tpu_num_cores is not None else "longest")
 
     def __call__(self, batch) -> Dict[str, torch.Tensor]:
+        lang_id = batch[0]['lang_id'] if 'lang_id' in batch[0] else None
         if self.is_bert_based:
             batch = self._bert_encode(batch)
         elif hasattr(self.tokenizer, "prepare_seq2seq_batch"):
@@ -484,7 +488,8 @@ class Seq2SeqDataCollator:
                 "decoder_input_ids": decoder_input_ids,
                 "labels": labels,
             }
-            
+        if lang_id is not None:
+            batch['lang_id'] = lang_id
         return batch
 
     def _shift_right_t5(self, input_ids):

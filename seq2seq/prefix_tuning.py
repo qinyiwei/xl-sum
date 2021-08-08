@@ -99,6 +99,7 @@ class PrefixTuningT5(T5PreTrainedModel):
         else:
             self.lowdata_output_token = None
   
+        self.num_lang  = len(config.multi_languages) if config.multi_languages is not None else 1
         self.mode_para = 0
         print('mode_para=0, for data2text Instruction based, just optimize a set of parameters ;) ')
         print('preseqlen is {}, under the mode of optimizing prefix directly'.format(self.preseqlen))
@@ -113,9 +114,8 @@ class PrefixTuningT5(T5PreTrainedModel):
                 print('IN THE LOW DATA SETTING, UNDER PARAMETRIZATION 1, low_data_init=3, '
                         'preseqlen = {} Unifying with FINETUNE'.format(self.preseqlen))
 
-                self.input_tokens = torch.arange(self.preseqlen).long()
                 if self.use_self_prefix:
-                    self.wte = nn.Embedding(self.preseqlen, self.n_embd)
+                    self.wte = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                     self.control_trans = nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
@@ -124,14 +124,14 @@ class PrefixTuningT5(T5PreTrainedModel):
                 self.get_prompt = self.get_prompt_p5
 
                 if self.use_encoder_prefix:
-                    self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
+                    self.wte_enc = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                     self.control_trans_enc = nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
                         nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
 
                 if self.use_cross_prefix:
-                    self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
+                    self.wte2 = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                     self.control_trans2 = nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
@@ -142,9 +142,8 @@ class PrefixTuningT5(T5PreTrainedModel):
             # DIFFERENT PARAMETRIZATION:
             low_data_init = 0
             print('UNDER PARAMETRIZATION 1')
-            self.input_tokens = torch.arange(self.preseqlen).long()
             if self.use_self_prefix:
-                self.wte = nn.Embedding(self.preseqlen, self.n_embd)
+                self.wte = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                 self.control_trans = nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
@@ -153,14 +152,14 @@ class PrefixTuningT5(T5PreTrainedModel):
             self.get_prompt = self.get_prompt_p5
 
             if self.use_encoder_prefix:
-                self.wte_enc = nn.Embedding(self.preseqlen, self.n_embd)
+                self.wte_enc = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                 self.control_trans_enc = nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
                     nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
 
             if self.use_cross_prefix:
-                self.wte2 = nn.Embedding(self.preseqlen, self.n_embd)
+                self.wte2 = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
                 self.control_trans2 = nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
@@ -189,9 +188,10 @@ class PrefixTuningT5(T5PreTrainedModel):
                 if low_data_init != 0:
                     assert False, "not surpport low_data_init={}".format(low_data_init)
 
-    def get_prompt_p5(self, control_code=None, gpt2=None, bsz=None, sample_size=1):
+    def get_prompt_p5(self, bsz=None, sample_size=1, lang_id = 0):
         old_bsz = bsz
         bsz = bsz * sample_size
+        self.input_tokens = torch.arange(self.preseqlen).long() + lang_id * self.preseqlen
         input_tokens = self.input_tokens.unsqueeze(0).expand(bsz, -1).to(self.device)
 
         if self.use_self_prefix:
@@ -368,7 +368,9 @@ class PrefixTuningT5(T5PreTrainedModel):
         bsz = input_ids.shape[0]
 
 
-        past_key_values_prompt = self.get_prompt(bsz=bsz)
+        past_key_values_prompt = self.get_prompt(bsz=bsz, lang_id=kwargs['lang_id'] if 'lang_id' in kwargs else 0)
+        if 'lang_id' in kwargs:
+            kwargs.pop('lang_id') 
         #past_key_values_prompt = None
         if past_key_values is not None:
             assert False, "Attention, use past_key_values for other things"
@@ -376,7 +378,7 @@ class PrefixTuningT5(T5PreTrainedModel):
             past_key_values = past_key_values_prompt
 
         #past_key_values = past_key_values.to(input_ids.device)
-        past_key_values = [[matrix.to(input_ids.device) for matrix in layer] for layer in past_key_values]
+        past_key_values = [[matrix.to(input_ids.device) if matrix is not None else None for matrix in layer] for layer in past_key_values]
         if gpt2_model is None:
             assert False, "Didn't specify gpt2 model"
 

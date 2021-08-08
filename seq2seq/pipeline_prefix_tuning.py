@@ -90,6 +90,7 @@ class ModelArguments:
     prefix_dropout: float = field(default=0.0, metadata={"help": "the dropout rate for our prefix model."})         
     mid_dim: int = field(default=800, metadata={"help": "the dimension of the intermediate layer.",})   
     format_mode: str = field(default='cat', metadata={"help": "whether to look at the input again, including [infix, cat, peek, nopeek]"}) 
+    not_freeze_lmodel: bool = field(default=False, metadata={"help": "Whether to freeze seq2seq model."})
 
     use_encoder_prefix: bool = field(default=False, metadata={"help": "Whether to use encoder prefix."})
     use_self_prefix: bool = field(default=False, metadata={"help": "Whether to use self prefix."})
@@ -99,7 +100,8 @@ class ModelArguments:
     low_data_init: int = field(default=3, metadata={"help": "how to initialize prefix."})   
     lowdata: bool = field(default=False, metadata={"help": "whether or not to use lowdata."})     
     lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."}) 
-    lowdata_output_token: str = field(default=None, metadata={"help": "the low data token to use."})   
+    lowdata_output_token: str = field(default=None, metadata={"help": "the low data token to use."})
+    multi_languages: str = field(default=None, metadata={"help": "language used under multi-language setting."})   
 
 @dataclass
 class DataTrainingArguments:
@@ -138,7 +140,7 @@ class DataTrainingArguments:
         },
     )
     test_max_target_length: Optional[int] = field(
-        default=84,
+        default=512,
         metadata={
             "help": "The maximum total sequence length for test target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
@@ -384,7 +386,7 @@ def main():
     if model_args.freeze_encoder:
         freeze_params(model.get_encoder())
         assert_all_frozen(model.get_encoder())
-    if model_args.tuning_mode == 'prefixtune':
+    if model_args.tuning_mode == 'prefixtune' and not model_args.not_freeze_lmodel:
         freeze_params(model.seq2seq_model)
         assert_all_frozen(model.seq2seq_model)
         print('FREEZING ENTIRE seq2seq model.')

@@ -132,6 +132,11 @@ class MultiDataset(Dataset):
         assert "is_distributed" in dataset_kwargs, "is_distributed required"
         assert "dataset_class" in dataset_kwargs, "dataset_class required"
         
+        if "share_embedding" in dataset_kwargs:
+            self.share_embedding = dataset_kwargs.pop("share_embedding")
+        else:
+            self.share_embedding = False
+
         self.dataloaders = []
         self.total_batch_size = dataset_kwargs.pop("total_batch_size")
         dataset_class = dataset_kwargs.pop("dataset_class")
@@ -185,7 +190,6 @@ class MultiDataset(Dataset):
                 
         self.current_dataset_idx = -1
         self.current_loader_count = 0
-
     
     def shift_iterator(self, idx, shift_count):
         if shift_count <= 0:
@@ -224,7 +228,8 @@ class MultiDataset(Dataset):
             self.shift_iterator(self.current_dataset_idx, self.total_batch_size - self.current_loader_count - self.pos_shift_count)
             self.current_loader_count = 0
 
-        datapoint[0]['lang_id'] = self.current_dataset_idx
+        if not self.share_embedding:
+            datapoint[0]['lang_id'] = self.current_dataset_idx
         return datapoint[0]
 
 
@@ -293,6 +298,11 @@ class AbstractSeq2SeqDataset(Dataset):
         **dataset_kwargs
     ):
         super().__init__()
+        if "lang_id" in dataset_kwargs:
+            self.lang_id = dataset_kwargs.pop("lang_id")
+        else:
+            self.lang_id = None
+
         self.src_file = Path(data_dir).joinpath(type_path + ".source")
         self.tgt_file = Path(data_dir).joinpath(type_path + ".target")
         self.len_file = Path(data_dir).joinpath(type_path + ".len")
@@ -419,7 +429,11 @@ class Seq2SeqDataset(AbstractSeq2SeqDataset):
         tgt_line = linecache.getline(str(self.tgt_file), index).rstrip("\n")
         assert source_line, f"empty source line for index {index}"
         assert tgt_line, f"empty tgt line for index {index}"
-        return {"tgt_texts": tgt_line, "src_texts": source_line, "id": index - 1}
+        
+        data = {"tgt_texts": tgt_line, "src_texts": source_line, "id": index - 1}
+        if self.lang_id:
+            data['lang_id'] = self.lang_id
+        return data
 
     def collate_fn(self, batch) -> Dict[str, torch.Tensor]:
         """Call prepare_seq2seq_batch."""

@@ -102,6 +102,7 @@ class ModelArguments:
     lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."}) 
     lowdata_output_token: str = field(default=None, metadata={"help": "the low data token to use."})
     multi_languages: str = field(default=None, metadata={"help": "language used under multi-language setting."})   
+    share_embedding: bool = field(default=False, metadata={"help": "For prefix_tuning, whether different languages share embedding."})
 
 @dataclass
 class DataTrainingArguments:
@@ -468,7 +469,8 @@ def main():
             "actual_batch_size": training_args.train_batch_size,
             "gradient_accum": training_args.gradient_accumulation_steps,
             "is_distributed": bool(training_args.local_rank != -1),
-            "dataset_class": dataset_class
+            "dataset_class": dataset_class,
+            "share_embedding": model_args.share_embedding
         }
         train_dataset = (
             MultiDataset(
@@ -498,6 +500,14 @@ def main():
             if training_args.do_train
             else None
         )
+
+    if model_args.multi_languages and data_args.rouge_lang is not None and not model_args.share_embedding:
+        multi_languages = model_args.multi_languages.split('-')
+        multi_languages.sort()
+        lang_id = multi_languages.index(data_args.rouge_lang)
+    else:
+        lang_id = None
+
     eval_dataset = (
         dataset_class(
             tokenizer,
@@ -507,6 +517,7 @@ def main():
             max_target_length=data_args.val_max_target_length,
             max_source_length=data_args.max_source_length,
             prefix=model.config.prefix or "",
+            lang_id=lang_id,
         )
         if training_args.do_eval or training_args.evaluation_strategy != EvaluationStrategy.NO
         else None
@@ -520,6 +531,7 @@ def main():
             max_target_length=data_args.test_max_target_length,
             max_source_length=data_args.max_source_length,
             prefix=model.config.prefix or "",
+            lang_id=lang_id,
         )
         if training_args.do_predict
         else None

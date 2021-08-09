@@ -99,7 +99,11 @@ class PrefixTuningT5(T5PreTrainedModel):
         else:
             self.lowdata_output_token = None
   
-        self.num_lang  = len(config.multi_languages) if config.multi_languages is not None else 1
+        if config.multi_languages is not None and not config.share_embedding:
+            self.num_lang  = len(config.multi_languages)
+        else:
+            self.num_lang = 1
+
         self.mode_para = 0
         print('mode_para=0, for data2text Instruction based, just optimize a set of parameters ;) ')
         print('preseqlen is {}, under the mode of optimizing prefix directly'.format(self.preseqlen))

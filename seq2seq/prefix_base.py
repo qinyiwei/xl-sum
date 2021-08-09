@@ -82,6 +82,7 @@ class PrefixTransformer(PreTrainedModel):
         config_prefix.multi_languages = self.hparams.multi_languages.split('-') if self.hparams.multi_languages is not None else None
         if config_prefix.multi_languages is not None:
             config_prefix.multi_languages.sort()
+        config_prefix.share_embedding = self.hparams.share_embedding 
 
         config_prefix.lowdata = self.hparams.lowdata#('lowdata' in self.hparams.output_dir)
         config_prefix.low_data_init = self.hparams.low_data_init

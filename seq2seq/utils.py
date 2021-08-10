@@ -132,10 +132,10 @@ class MultiDataset(Dataset):
         assert "is_distributed" in dataset_kwargs, "is_distributed required"
         assert "dataset_class" in dataset_kwargs, "dataset_class required"
         
-        if "share_embedding" in dataset_kwargs:
-            self.share_embedding = dataset_kwargs.pop("share_embedding")
+        if "private_embedding" in dataset_kwargs:
+            self.private_embedding = dataset_kwargs.pop("private_embedding")
         else:
-            self.share_embedding = False
+            self.private_embedding = False
 
         self.dataloaders = []
         self.total_batch_size = dataset_kwargs.pop("total_batch_size")
@@ -228,7 +228,7 @@ class MultiDataset(Dataset):
             self.shift_iterator(self.current_dataset_idx, self.total_batch_size - self.current_loader_count - self.pos_shift_count)
             self.current_loader_count = 0
 
-        if not self.share_embedding:
+        if self.private_embedding:
             datapoint[0]['lang_id'] = self.current_dataset_idx
         return datapoint[0]
 

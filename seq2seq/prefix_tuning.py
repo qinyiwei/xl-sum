@@ -99,7 +99,7 @@ class PrefixTuningT5(T5PreTrainedModel):
         else:
             self.lowdata_output_token = None
   
-        if config.multi_languages is not None and not config.share_embedding:
+        if config.multi_languages is not None and config.private_embedding:
             self.num_lang  = len(config.multi_languages)
         else:
             self.num_lang = 1

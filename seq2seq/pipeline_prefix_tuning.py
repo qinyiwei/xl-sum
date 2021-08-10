@@ -102,7 +102,7 @@ class ModelArguments:
     lowdata_token: str = field(default='summarize', metadata={"help": "the low data token to use."}) 
     lowdata_output_token: str = field(default=None, metadata={"help": "the low data token to use."})
     multi_languages: str = field(default=None, metadata={"help": "language used under multi-language setting."})   
-    share_embedding: bool = field(default=False, metadata={"help": "For prefix_tuning, whether different languages share embedding."})
+    private_embedding: bool = field(default=False, metadata={"help": "For prefix_tuning, whether different languages share embedding."})
 
 @dataclass
 class DataTrainingArguments:
@@ -470,7 +470,7 @@ def main():
             "gradient_accum": training_args.gradient_accumulation_steps,
             "is_distributed": bool(training_args.local_rank != -1),
             "dataset_class": dataset_class,
-            "share_embedding": model_args.share_embedding
+            "private_embedding": model_args.private_embedding
         }
         train_dataset = (
             MultiDataset(
@@ -501,7 +501,7 @@ def main():
             else None
         )
 
-    if model_args.multi_languages and data_args.rouge_lang is not None and not model_args.share_embedding:
+    if model_args.multi_languages and data_args.rouge_lang is not None and model_args.private_embedding:
         multi_languages = model_args.multi_languages.split('-')
         multi_languages.sort()
         lang_id = multi_languages.index(data_args.rouge_lang)

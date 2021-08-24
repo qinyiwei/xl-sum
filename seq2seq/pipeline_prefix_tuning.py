@@ -132,7 +132,7 @@ class DataTrainingArguments:
         },
     )
     val_max_target_length: Optional[int] = field(
-        default=512,
+        default=84,
         metadata={
             "help": "The maximum total sequence length for validation target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded. "
@@ -141,7 +141,7 @@ class DataTrainingArguments:
         },
     )
     test_max_target_length: Optional[int] = field(
-        default=512,
+        default=84,
         metadata={
             "help": "The maximum total sequence length for test target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded."
@@ -350,6 +350,14 @@ def main():
             cache_dir=model_args.cache_dir,
         )
 
+    if model_args.multi_languages and data_args.rouge_lang is not None and model_args.private_embedding:
+        multi_languages = model_args.multi_languages.split('-')
+        multi_languages.sort()
+        lang_id = multi_languages.index(data_args.rouge_lang)
+    else:
+        lang_id = None
+
+    #lang_id = 0
     if model_args.prefixModel_name_or_path is not None and model_args.load_whole_model:
         print("load whole model from {}".format(model_args.prefixModel_name_or_path))
         model = PrefixSummarizationModule.from_pretrained(model_args.prefixModel_name_or_path,
@@ -358,10 +366,11 @@ def main():
                             hparams=model_args, 
                             config=config, 
                             tokenizer=tokenizer, 
-                            seq2seq_model=seq2seq_model)
+                            seq2seq_model=seq2seq_model,
+                            lang_id=lang_id)
     else:
         if model_args.tuning_mode == 'prefixtune':
-            model = PrefixSummarizationModule(config=config, hparams=model_args,  tokenizer=tokenizer, seq2seq_model=seq2seq_model)
+            model = PrefixSummarizationModule(config=config, hparams=model_args,  tokenizer=tokenizer, seq2seq_model=seq2seq_model, lang_id=lang_id)
         else:
             model = seq2seq_model
 
@@ -501,13 +510,7 @@ def main():
             else None
         )
 
-    if model_args.multi_languages and data_args.rouge_lang is not None and model_args.private_embedding:
-        multi_languages = model_args.multi_languages.split('-')
-        multi_languages.sort()
-        lang_id = multi_languages.index(data_args.rouge_lang)
-    else:
-        lang_id = None
-
+    
     eval_dataset = (
         dataset_class(
             tokenizer,

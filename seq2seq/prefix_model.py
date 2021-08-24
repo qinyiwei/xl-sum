@@ -57,6 +57,7 @@ class PrefixSummarizationModule(PrefixTransformer):
     def __init__(self, config=None, hparams=None, tokenizer=None, seq2seq_model=None, **kwargs):
         super().__init__(config=config, hparams=hparams, tokenizer=tokenizer, seq2seq_model=seq2seq_model, **kwargs)
         self.eval_beams = self.hparams.eval_beams
+        self.lang_id = kwargs['lang_id'] if ('lang_id' in kwargs and kwargs['lang_id'] is not None) else 0
 
     def forward(self, input_ids, **kwargs):
         #TODO:only keep second condition
@@ -72,7 +73,7 @@ class PrefixSummarizationModule(PrefixTransformer):
     ) -> torch.LongTensor:
 
         bsz = input_ids.size(0)
-        prefix_prompt = self.model.get_prompt(bsz=bsz, sample_size=self.eval_beams)
+        prefix_prompt = self.model.get_prompt(bsz=bsz, sample_size=self.eval_beams, lang_id=self.lang_id)
         return self.seq2seq_model.generate(
             input_ids,
             past_key_values=prefix_prompt,

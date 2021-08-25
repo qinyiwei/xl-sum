@@ -276,6 +276,36 @@ def get_scheduler(
 
     return schedule_func(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
 
+def get_diff_schedule_lienar_transformer(optimizer, num_warmup_steps, num_training_steps, last_epoch=-1):
+    def lr_lambda_transformer(current_step: int):
+        current_step = max(1, current_step)
+        return (768 ** -0.5) * min(current_step ** (-0.5), current_step * num_warmup_steps ** (-1.5))
+
+
+    def lr_lambda_linear(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        return max(
+            0.0, float(num_training_steps - current_step) / float(max(1, num_training_steps - num_warmup_steps))
+        )
+
+    return LambdaLR(optimizer, [lr_lambda_linear,lr_lambda_linear,lr_lambda_transformer,lr_lambda_transformer], last_epoch)
+
+def get_scheduler_different(
+    optimizer: Optimizer,
+    num_warmup_steps: Optional[int] = None,
+    num_training_steps: Optional[int] = None,
+):
+    # All other schedulers require `num_warmup_steps`
+    if num_warmup_steps is None:
+        raise ValueError(f"get_scheduler_different requires `num_warmup_steps`, please provide that argument.")
+
+    # All other schedulers require `num_training_steps`
+    if num_training_steps is None:
+        raise ValueError(f"get_scheduler_different requires `num_training_steps`, please provide that argument.")
+
+    return get_diff_schedule_lienar_transformer(optimizer, num_warmup_steps=num_warmup_steps, num_training_steps=num_training_steps)
+
 
 class AdamW(Optimizer):
     """

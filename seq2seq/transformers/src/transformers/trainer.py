@@ -57,7 +57,7 @@ from .data.data_collator import DataCollator, DataCollatorWithPadding, default_d
 from .file_utils import WEIGHTS_NAME, is_apex_available, is_datasets_available, is_in_notebook, is_torch_tpu_available
 from .modeling_utils import PreTrainedModel
 from .models.auto.modeling_auto import MODEL_FOR_QUESTION_ANSWERING_MAPPING
-from .optimization import Adafactor, AdamW, get_scheduler
+from .optimization import Adafactor, AdamW, get_scheduler, get_scheduler_different
 from .tokenization_utils_base import PreTrainedTokenizerBase
 from .trainer_callback import (
     CallbackHandler,
@@ -503,45 +503,96 @@ class Trainer:
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
         if self.optimizer is None:
-            no_decay = ["bias", "LayerNorm.weight"]
-            optimizer_grouped_parameters = [
-                {
-                    "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                    "weight_decay": self.args.weight_decay,
-                },
-                {
-                    "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
-                    "weight_decay": 0.0,
-                },
-            ]
-            optimizer_cls = Adafactor if self.args.adafactor else AdamW
-            if self.args.adafactor:
-                optimizer_cls = Adafactor
-                optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
-                # optimizer_kwargs = {"scale_parameter": True, "relative_step": True, "warmup_init": True}
+            if self.args.different_lr:
+                no_decay = ["bias", "LayerNorm.weight"]
+                optimizer_grouped_parameters = [
+                    {
+                        "params": [p for n, p in self.model.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                        "weight_decay": self.args.weight_decay,
+                        "lr":self.args.learning_rate,
+                    },
+                    {
+                        "params": [p for n, p in self.model.model.named_parameters() if any(nd in n for nd in no_decay)],
+                        "weight_decay": 0.0,
+                        "lr":self.args.learning_rate,
+                    },
+                    {
+                        "params": [p for n, p in self.model.seq2seq_model.named_parameters() if not any(nd in n for nd in no_decay)],
+                        "weight_decay": self.args.weight_decay,
+                        "lr":self.args.learning_rate_LM,
+                    },
+                    {
+                        "params": [p for n, p in self.model.seq2seq_model.named_parameters() if any(nd in n for nd in no_decay)],
+                        "weight_decay": 0.0,
+                        "lr":self.args.learning_rate_LM,
+                    },
+                ]
+                optimizer_cls = Adafactor if self.args.adafactor else AdamW
+                if self.args.adafactor:
+                    optimizer_cls = Adafactor
+                    optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
+                    # optimizer_kwargs = {"scale_parameter": True, "relative_step": True, "warmup_init": True}
+                else:
+                    optimizer_cls = AdamW
+                    optimizer_kwargs = {
+                        "betas": (self.args.adam_beta1, self.args.adam_beta2),
+                        "eps": self.args.adam_epsilon,
+                    }
+                if self.sharded_dpp:
+                    self.optimizer = OSS(
+                        params=optimizer_grouped_parameters,
+                        optim=optimizer_cls,
+                        **optimizer_kwargs,
+                    )
+                else:
+                    self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
             else:
-                optimizer_cls = AdamW
-                optimizer_kwargs = {
-                    "betas": (self.args.adam_beta1, self.args.adam_beta2),
-                    "eps": self.args.adam_epsilon,
-                }
-            optimizer_kwargs["lr"] = self.args.learning_rate
-            if self.sharded_dpp:
-                self.optimizer = OSS(
-                    params=optimizer_grouped_parameters,
-                    optim=optimizer_cls,
-                    **optimizer_kwargs,
-                )
-            else:
-                self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
+                no_decay = ["bias", "LayerNorm.weight"]
+                optimizer_grouped_parameters = [
+                    {
+                        "params": [p for n, p in self.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                        "weight_decay": self.args.weight_decay,
+                    },
+                    {
+                        "params": [p for n, p in self.model.named_parameters() if any(nd in n for nd in no_decay)],
+                        "weight_decay": 0.0,
+                    },
+                ]
+                optimizer_cls = Adafactor if self.args.adafactor else AdamW
+                if self.args.adafactor:
+                    optimizer_cls = Adafactor
+                    optimizer_kwargs = {"scale_parameter": False, "relative_step": False}
+                    # optimizer_kwargs = {"scale_parameter": True, "relative_step": True, "warmup_init": True}
+                else:
+                    optimizer_cls = AdamW
+                    optimizer_kwargs = {
+                        "betas": (self.args.adam_beta1, self.args.adam_beta2),
+                        "eps": self.args.adam_epsilon,
+                    }
+                optimizer_kwargs["lr"] = self.args.learning_rate
+                if self.sharded_dpp:
+                    self.optimizer = OSS(
+                        params=optimizer_grouped_parameters,
+                        optim=optimizer_cls,
+                        **optimizer_kwargs,
+                    )
+                else:
+                    self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
 
         if self.lr_scheduler is None:
-            self.lr_scheduler = get_scheduler(
-                self.args.lr_scheduler_type,
-                self.optimizer,
-                num_warmup_steps=self.args.warmup_steps,
-                num_training_steps=num_training_steps,
-            )
+            if self.args.different_lr_schedule:
+                self.lr_scheduler = get_scheduler_different(
+                    self.optimizer,
+                    num_warmup_steps=self.args.warmup_steps,
+                    num_training_steps=num_training_steps,
+                )
+            else:
+                self.lr_scheduler = get_scheduler(
+                    self.args.lr_scheduler_type,
+                    self.optimizer,
+                    num_warmup_steps=self.args.warmup_steps,
+                    num_training_steps=num_training_steps,
+                )
 
     def num_examples(self, dataloader: DataLoader) -> int:
         """

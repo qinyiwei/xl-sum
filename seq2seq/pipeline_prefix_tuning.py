@@ -172,8 +172,15 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "whether to use preprocessed data from disk or tokenize dynamically"}
     )
-    
-    
+    different_lr: bool = field(
+        default=False,
+        metadata={"help": "whether to use different lr for prefix params and LM params"}
+    )
+    different_lr_schedule: bool = field(
+        default=False,
+        metadata={"help": "whether to use different lr for prefix params and LM params"}
+    )
+    learning_rate_LM: Optional[float] = field(default=5e-4, metadata={"help": "learning rate for language model."}) 
 
 def handle_metrics(split, metrics, output_dir):
     """
@@ -206,7 +213,10 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    
+    training_args.different_lr = data_args.different_lr
+    training_args.learning_rate_LM = data_args.learning_rate_LM
+    training_args.different_lr_schedule = data_args.different_lr_schedule
+
     check_output_dir(training_args)
 
     # Setup logging

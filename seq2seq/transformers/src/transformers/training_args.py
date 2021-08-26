@@ -496,6 +496,8 @@ class TrainingArguments:
         else:
             # Here, we'll use torch.distributed.
             # Initializes the distributed backend which will take care of synchronizing nodes/GPUs
+            print("self.local_rank is:"+str(self.local_rank))
+            torch.cuda.set_device(self.local_rank)
             torch.distributed.init_process_group(backend="nccl")
             device = torch.device("cuda", self.local_rank)
             n_gpu = 1

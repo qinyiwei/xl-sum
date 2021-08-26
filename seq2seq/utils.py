@@ -427,9 +427,15 @@ class Seq2SeqDataset(AbstractSeq2SeqDataset):
         index = index + 1  # linecache starts at 1
         source_line = self.prefix + linecache.getline(str(self.src_file), index).rstrip("\n")
         tgt_line = linecache.getline(str(self.tgt_file), index).rstrip("\n")
-        assert source_line, f"empty source line for index {index}"
-        assert tgt_line, f"empty tgt line for index {index}"
-        
+        #assert source_line, f"empty source line for index {index}"
+        #assert tgt_line, f"empty tgt line for index {index}"
+        if source_line is None:
+            print(f"empty source line for index {index}")
+            source_line=""
+        if tgt_line is None:
+            print(f"empty tgt line for index {index}")
+            tgt_line=""
+
         data = {"tgt_texts": tgt_line, "src_texts": source_line, "id": index - 1}
         if self.lang_id:
             data['lang_id'] = self.lang_id

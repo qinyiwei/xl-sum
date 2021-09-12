@@ -503,7 +503,7 @@ class Trainer:
         Trainer's init through :obj:`optimizers`, or subclass and override this method in a subclass.
         """
         if self.optimizer is None:
-            if self.args.different_lr:
+            if hasattr(self.args,'different_lr') and self.args.different_lr:
                 no_decay = ["bias", "LayerNorm.weight"]
                 optimizer_grouped_parameters = [
                     {
@@ -580,7 +580,7 @@ class Trainer:
                     self.optimizer = optimizer_cls(optimizer_grouped_parameters, **optimizer_kwargs)
 
         if self.lr_scheduler is None:
-            if self.args.different_lr_schedule:
+            if hasattr(self.args,'different_lr_schedule') and self.args.different_lr_schedule:
                 self.lr_scheduler = get_scheduler_different(
                     self.optimizer,
                     num_warmup_steps=self.args.warmup_steps,

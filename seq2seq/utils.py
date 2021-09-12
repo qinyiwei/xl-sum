@@ -31,6 +31,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     FAIRSEQ_AVAILABLE = False
 
+from nltk import sent_tokenize
 
 def label_smoothed_nll_loss(lprobs, target, epsilon, ignore_index=-100):
     """From fairseq"""
@@ -761,6 +762,11 @@ def freeze_params(model: nn.Module):
     for par in model.parameters():
         par.requires_grad = False
 
+def freeze_lm_params_for_adaptor(model: nn.Module):
+    """Set requires_grad=False for each of model.parameters()"""
+    for name, par in model.named_parameters():
+        if "adaptor" not in name:
+            par.requires_grad = False
 
 def freeze_embeds(model):
     """Freeze token embeddings and positional embeddings for bart, just token embeddings for t5."""
@@ -784,10 +790,17 @@ def freeze_embeds(model):
 def grad_status(model: nn.Module) -> Iterable:
     return (par.requires_grad for par in model.parameters())
 
+def grad_status_lm_for_adaptor(model: nn.Module) -> Iterable:
+    return (par.requires_grad for name,par in model.named_parameters() if "adaptor" not in name)
 
 def any_requires_grad(model: nn.Module) -> bool:
     return any(grad_status(model))
 
+def assert_lm_params_frozen_for_adaptor(model):
+    model_grads: List[bool] = list(grad_status_lm_for_adaptor(model))
+    n_require_grad = sum(lmap(int, model_grads))
+    npars = len(model_grads)
+    assert not any(model_grads), f"{n_require_grad/npars:.1%} of {npars} weights require grad"
 
 def assert_all_frozen(model):
     model_grads: List[bool] = list(grad_status(model))
@@ -862,3 +875,34 @@ def check_output_dir(args, expected_items=0):
             f"has {len(os.listdir(args.output_dir))} items in it (expected {expected_items} items). "
             "Use --overwrite_output_dir to overcome."
         )
+
+def greedy_selection(src, tgt, N, lang):
+    output = []
+    src_sents = sent_tokenize(src)
+    for i in range(N):
+        max_rouge = 0
+        for s in src_sents:
+            rouge = calculate_rouge(["".join(output)+s],[tgt],rouge_lang=lang) 
+            cur_rouge = rouge["rouge1"]+rouge["rouge2"]+rouge["rougeL"]
+            if cur_rouge > max_rouge:
+                max_rouge = cur_rouge
+                max_sent = s
+        if max_rouge==0:
+            break
+        output.append(max_sent)
+        src_sents.remove(max_sent)
+    return output
+
+
+
+def print_model_parameters_number_for_adaptor(model: nn.Module):
+    total_param_adaptor = 0
+    total_param_lm = 0
+    for name, param in model.named_parameters():
+        if "adaptor" in name:
+            print(param.shape)
+            total_param_adaptor += param.numel()
+        else:
+            total_param_lm += param.numel()
+    print('total_param_adaptor is {}'.format(total_param_adaptor))
+    print('total_param_lm is {}'.format(total_param_lm))

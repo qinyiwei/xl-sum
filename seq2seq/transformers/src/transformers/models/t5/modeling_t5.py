@@ -297,6 +297,24 @@ class T5LayerFF(nn.Module):
         hidden_states = hidden_states + self.dropout(forwarded_states)
         return hidden_states
 
+class Adaptor(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        #self.layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
+        self.layer_norm = nn.BatchNorm1d(config.d_model, eps=config.layer_norm_epsilon)
+        self.down_projection = nn.Linear(config.d_model, config.adaptor_mid_dim, bias=False)
+        self.up_projection = nn.Linear(config.adaptor_mid_dim, config.d_model, bias=False)
+
+    def forward(self, hidden_states):
+        #forwarded_states = hidden_states
+        forwarded_states=hidden_states.permute(0,2,1)
+        forwarded_states = self.layer_norm(forwarded_states)
+        forwarded_states=forwarded_states.permute(0,2,1).contiguous()
+        forwarded_states = self.down_projection(forwarded_states)
+        forwarded_states = F.relu(forwarded_states)
+        forwarded_states = self.up_projection(forwarded_states)
+        hidden_states = hidden_states + forwarded_states
+        return hidden_states
 
 class T5Attention(nn.Module):
     def __init__(self, config: T5Config, has_relative_attention_bias=False):
@@ -613,6 +631,9 @@ class T5Block(nn.Module):
 
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
 
+        if hasattr(config, "use_adaptor") and config.use_adaptor:
+            self.adaptor = Adaptor(config) 
+
     def forward(
         self,
         hidden_states,
@@ -689,6 +710,11 @@ class T5Block(nn.Module):
 
         # Apply Feed Forward layer
         hidden_states = self.layer[-1](hidden_states)
+
+        #Apply Adaptor
+        if hasattr(self, "adaptor"):
+            hidden_states = self.adaptor(hidden_states)
+
         outputs = (hidden_states,)
 
         outputs = outputs + (present_key_value_state,) + attention_outputs

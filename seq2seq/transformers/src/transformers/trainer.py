@@ -505,28 +505,92 @@ class Trainer:
         if self.optimizer is None:
             if hasattr(self.args,'different_lr') and self.args.different_lr:
                 no_decay = ["bias", "LayerNorm.weight"]
-                optimizer_grouped_parameters = [
-                    {
-                        "params": [p for n, p in self.model.model.named_parameters() if not any(nd in n for nd in no_decay)],
-                        "weight_decay": self.args.weight_decay,
-                        "lr":self.args.learning_rate,
-                    },
-                    {
-                        "params": [p for n, p in self.model.model.named_parameters() if any(nd in n for nd in no_decay)],
-                        "weight_decay": 0.0,
-                        "lr":self.args.learning_rate,
-                    },
-                    {
-                        "params": [p for n, p in self.model.seq2seq_model.named_parameters() if not any(nd in n for nd in no_decay)],
-                        "weight_decay": self.args.weight_decay,
-                        "lr":self.args.learning_rate_LM,
-                    },
-                    {
-                        "params": [p for n, p in self.model.seq2seq_model.named_parameters() if any(nd in n for nd in no_decay)],
-                        "weight_decay": 0.0,
-                        "lr":self.args.learning_rate_LM,
-                    },
-                ]
+                if hasattr(self.model,'model'):
+                    p1 = [n for n, p in self.model.model.named_parameters() if not any(nd in n for nd in no_decay)]
+                    p2 = [n for n, p in self.model.model.named_parameters() if any(nd in n for nd in no_decay)]
+                    p3 = [n for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' in n and not any(nd in n for nd in no_decay)]
+                    p4 = [n for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' in n and any(nd in n for nd in no_decay)]
+                    p5 = [n for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' not in n and not any(nd in n for nd in no_decay)]
+                    p6 = [n for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' not in n and any(nd in n for nd in no_decay)]
+                    optimizer_grouped_parameters = [
+                        {
+                            "params": [p for n, p in self.model.model.named_parameters() if not any(nd in n for nd in no_decay)],
+                            "weight_decay": self.args.weight_decay,
+                            "lr":self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.model.named_parameters() if any(nd in n for nd in no_decay)],
+                            "weight_decay": 0.0,
+                            "lr":self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' in n and not any(nd in n for nd in no_decay)],
+                            "weight_decay": self.args.weight_decay,
+                            "lr":self.args.learning_rate_Adaptor if hasattr(self.args,'learning_rate_Adaptor') else self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' in n and any(nd in n for nd in no_decay)],
+                            "weight_decay": 0.0,
+                            "lr":self.args.learning_rate_Adaptor if hasattr(self.args,'learning_rate_Adaptor') else self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' not in n and not any(nd in n for nd in no_decay)],
+                            "weight_decay": self.args.weight_decay,
+                            "lr":self.args.learning_rate_LM if hasattr(self.args,'learning_rate_LM') else self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.seq2seq_model.named_parameters() if 'adaptor' not in n and any(nd in n for nd in no_decay)],
+                            "weight_decay": 0.0,
+                            "lr":self.args.learning_rate_LM if hasattr(self.args,'learning_rate_LM') else self.args.learning_rate,
+                        },
+                    ]
+                    print(p1)
+                    print("lr is:{}".format(optimizer_grouped_parameters[0]["lr"]))
+                    print(p2)
+                    print("lr is:{}".format(optimizer_grouped_parameters[1]["lr"]))
+                    print(p3)
+                    print("lr is:{}".format(optimizer_grouped_parameters[2]["lr"]))
+                    print(p4)
+                    print("lr is:{}".format(optimizer_grouped_parameters[3]["lr"]))
+                    print(p5)
+                    print("lr is:{}".format(optimizer_grouped_parameters[4]["lr"]))
+                    print(p6)
+                    print("lr is:{}".format(optimizer_grouped_parameters[5]["lr"]))
+                else:
+                    p1 = [n for n, p in self.model.named_parameters() if 'adaptor' in n and not any(nd in n for nd in no_decay)]
+                    p2 = [n for n, p in self.model.named_parameters() if 'adaptor' in n and any(nd in n for nd in no_decay)]
+                    p3 = [n for n, p in self.model.named_parameters() if 'adaptor' not in n and not any(nd in n for nd in no_decay)]
+                    p4 = [n for n, p in self.model.named_parameters() if 'adaptor' not in n and any(nd in n for nd in no_decay)]
+                    optimizer_grouped_parameters = [
+                        {
+                            "params": [p for n, p in self.model.named_parameters() if 'adaptor' in n and not any(nd in n for nd in no_decay)],
+                            "weight_decay": self.args.weight_decay,
+                            "lr":self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.named_parameters() if 'adaptor' in n and any(nd in n for nd in no_decay)],
+                            "weight_decay": 0.0,
+                            "lr":self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.named_parameters() if 'adaptor' not in n and not any(nd in n for nd in no_decay)],
+                            "weight_decay": self.args.weight_decay,
+                            "lr":self.args.learning_rate_LM if hasattr(self.args,'learning_rate_LM') else self.args.learning_rate,
+                        },
+                        {
+                            "params": [p for n, p in self.model.named_parameters() if 'adaptor' not in n and any(nd in n for nd in no_decay)],
+                            "weight_decay": 0.0,
+                            "lr":self.args.learning_rate_LM if hasattr(self.args,'learning_rate_LM') else self.args.learning_rate,
+                        },
+                    ]
+                    print(p1)
+                    print("lr is:{}".format(optimizer_grouped_parameters[0]["lr"]))
+                    print(p2)
+                    print("lr is:{}".format(optimizer_grouped_parameters[1]["lr"]))
+                    print(p3)
+                    print("lr is:{}".format(optimizer_grouped_parameters[2]["lr"]))
+                    print(p4)
+                    print("lr is:{}".format(optimizer_grouped_parameters[3]["lr"]))
                 optimizer_cls = Adafactor if self.args.adafactor else AdamW
                 if self.args.adafactor:
                     optimizer_cls = Adafactor

@@ -7,6 +7,7 @@ import glob
 import json
 from dataclasses import dataclass, field
 from typing import Optional
+import random
 
 import transformers
 from transformers import (
@@ -394,7 +395,7 @@ def main():
                 tokenizer,
                 type_path="train",
                 data_dir=data_args.data_dir,
-                n_obs=data_args.n_train,
+                n_obs=-1, #data_args.n_train,
                 max_target_length=data_args.max_target_length,
                 max_source_length=data_args.max_source_length,
                 prefix=model.config.prefix or "",
@@ -409,7 +410,7 @@ def main():
                 tokenizer,
                 type_path="train",
                 data_dir=data_args.data_dir,
-                n_obs=data_args.n_train,
+                n_obs=-1, #data_args.n_train,
                 max_target_length=data_args.max_target_length,
                 max_source_length=data_args.max_source_length,
                 prefix=model.config.prefix or "",
@@ -417,12 +418,19 @@ def main():
             if training_args.do_train
             else None
         )
+    
+    if data_args.n_train!=-1:
+        random_index = random.sample(range(0, len(train_dataset)), data_args.n_train)
+        print("train random_index:")
+        print(random_index)
+        train_dataset = torch.utils.data.Subset(train_dataset, random_index)
+
     eval_dataset = (
         dataset_class(
             tokenizer,
             type_path="val",
             data_dir=data_args.data_dir,
-            n_obs=data_args.n_val,
+            n_obs=-1, #data_args.n_val,
             max_target_length=data_args.val_max_target_length,
             max_source_length=data_args.max_source_length,
             prefix=model.config.prefix or "",
@@ -430,6 +438,12 @@ def main():
         if training_args.do_eval or training_args.evaluation_strategy != EvaluationStrategy.NO
         else None
     )
+    if data_args.n_val!=-1:
+        random_index = random.sample(range(0, len(eval_dataset)), data_args.n_val)
+        print("val random_index:")
+        print(random_index)
+        eval_dataset = torch.utils.data.Subset(eval_dataset, random_index)
+
     test_dataset = (
         dataset_class(
             tokenizer,

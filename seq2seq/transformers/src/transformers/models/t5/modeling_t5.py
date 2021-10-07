@@ -826,6 +826,9 @@ class T5Stack(T5PreTrainedModel):
 
         self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
+        self.use_prompt = config.use_prompt if hasattr(config, 'use_prompt') else False
+        self.use_encoder_prompt = config.use_encoder_prompt if hasattr(config, 'use_encoder_prompt') else False
+        self.use_decoder_prompt = config.use_decoder_prompt if hasattr(config, 'use_decoder_prompt') else False
         self.use_cross_prefix = config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
 
     @add_start_docstrings(PARALLELIZE_DOCSTRING)
@@ -881,7 +884,16 @@ class T5Stack(T5PreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
         use_prefix=None,
+        use_prompt=None,
+        prompts=None,
+
     ):
+        if prompts is not None:
+            if self.is_decoder:
+                input_prompt = prompts[1]
+            else:
+                input_prompt = prompts[0]
+
         # Model parallel
         if self.model_parallel:
             torch.cuda.set_device(self.first_device)
@@ -911,17 +923,31 @@ class T5Stack(T5PreTrainedModel):
             assert self.embed_tokens is not None, "You have to initialize the model with valid token embeddings"
             inputs_embeds = self.embed_tokens(input_ids)
 
+        if self.use_prompt and input_prompt is not None and not self.is_decoder:
+            inputs_embeds = torch.cat([input_prompt,inputs_embeds],dim=1)
+            input_shape = inputs_embeds.size()[:-1]
+
         batch_size, seq_length = input_shape
 
         # required mask seq length can be calculated via length of past
         mask_seq_length = past_key_values[0][0].shape[2] + seq_length if (past_key_values is not None and past_key_values[0][0] is not None) else seq_length
-
+        
         if not self.use_prefix:
             if use_cache is True:
                 assert self.is_decoder, ":obj:`use_cache` can only be set to `True` if {} is used as a decoder".format(
                     self
                 )
 
+        if self.use_prompt and attention_mask is not None and not self.is_decoder and self.use_encoder_prompt:
+            extend_att_mask = torch.ones(
+                (batch_size, self.preseqlen), device=attention_mask.device, dtype=attention_mask.dtype
+            )
+            attention_mask = torch.cat([extend_att_mask, attention_mask], dim = -1)
+        if self.use_prompt and encoder_attention_mask is not None and self.is_decoder and self.use_encoder_prompt:
+            extend_att_mask = torch.ones(
+                (batch_size, self.preseqlen), device=encoder_attention_mask.device, dtype=encoder_attention_mask.dtype
+            )
+            encoder_attention_mask = torch.cat([extend_att_mask, encoder_attention_mask], dim = -1)
         if use_prefix and not self.is_decoder and attention_mask is not None and past_key_values is not None and past_key_values[0][4] is not None:
             extend_att_mask = torch.ones(
                 (batch_size, past_key_values[0][4].shape[2]), device=attention_mask.device, dtype=attention_mask.dtype
@@ -1460,6 +1486,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         output_hidden_states=None,
         return_dict=None,
         use_prefix=None,
+        use_prompt=None,
+        prompts=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -1501,6 +1529,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 return_dict=return_dict,
                 past_key_values=past_key_values,
                 use_prefix = use_prefix,
+                use_prompt = use_prompt,
+                prompts = prompts,
             )
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
@@ -1553,6 +1583,8 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             use_prefix = use_prefix,
+            use_prompt = use_prompt,
+            prompts = prompts,
         )
 
         sequence_output = decoder_outputs[0]
@@ -1607,12 +1639,18 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             else:
                 past = None
 
+
+        prompts = kwargs['prompts'] if 'prompts' in kwargs else None
+        use_prompt = kwargs['use_prompt'] if 'use_prompt' in kwargs else None
+
         return {
             "decoder_input_ids": input_ids,
             "past_key_values": past,
             "encoder_outputs": encoder_outputs,
             "attention_mask": attention_mask,
             "use_cache": use_cache,
+            "use_prompt": use_prompt,
+            "prompts": prompts,
         }
 
     def _reorder_cache(self, past, beam_idx):

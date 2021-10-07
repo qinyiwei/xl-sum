@@ -342,8 +342,8 @@ class BartEncoderLayer(nn.Module):
             embed_dim=self.embed_dim,
             num_heads=config.encoder_attention_heads,
             dropout=config.attention_dropout,
-            use_prefix=config.use_prefix, 
-            preseqlen=config.preseqlen,
+            use_prefix=config.use_prefix if hasattr(config,'use_prefix') else False, 
+            preseqlen=config.preseqlen if hasattr(config, 'preseqlen') else None,
         )
         self.normalize_before = config.normalize_before
         self.self_attn_layer_norm = BartLayerNorm(self.embed_dim)
@@ -402,8 +402,8 @@ class BartDecoderLayer(nn.Module):
             num_heads=config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
-            use_prefix=config.use_prefix, 
-            preseqlen=config.preseqlen,
+            use_prefix=config.use_prefix if hasattr(config,'use_prefix') else False, 
+            preseqlen=config.preseqlen if hasattr(config, 'preseqlen') else None,
         )
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
@@ -416,8 +416,8 @@ class BartDecoderLayer(nn.Module):
             config.decoder_attention_heads,
             dropout=config.attention_dropout,
             is_decoder=True,
-            use_prefix=config.use_prefix, 
-            preseqlen=config.preseqlen,
+            use_prefix=config.use_prefix if hasattr(config,'use_prefix') else False, 
+            preseqlen=config.preseqlen if hasattr(config, 'preseqlen') else None,
         )
         self.encoder_attn_layer_norm = BartLayerNorm(self.embed_dim)
         self.fc1 = nn.Linear(self.embed_dim, config.decoder_ffn_dim)
@@ -834,7 +834,8 @@ class BartDecoder(BartPretrainedModel):
         self.padding_idx = config.pad_token_id
         self.max_target_positions = config.max_position_embeddings
         self.embed_scale = math.sqrt(config.d_model) if config.scale_embedding else 1.0
-        self.preseqlen = config.preseqlen
+        self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else None
+        self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else None
         if embed_tokens is not None:
             self.embed_tokens = embed_tokens
         else:
@@ -992,7 +993,10 @@ class BartDecoder(BartPretrainedModel):
             encoder_attention_mask = _expand_mask(encoder_attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1])
 
         # embed positions #TODO: find the differences of two postion embeddings
-        positions = self.embed_positions(input_shape, past_key_values_length - self.preseqlen if past_key_values_length >= self.preseqlen else past_key_values_length)#positions = self.embed_positions(input_ids, use_cache=use_cache)#positions = self.embed_positions(input_shape, past_key_values_length)
+        if self.use_prefix:
+            positions = self.embed_positions(input_shape, past_key_values_length - self.preseqlen if past_key_values_length >= self.preseqlen else past_key_values_length)#positions = self.embed_positions(input_ids, use_cache=use_cache)#positions = self.embed_positions(input_shape, past_key_values_length)
+        else:
+            positions = self.embed_positions(input_shape, past_key_values_length)
 
         if self.do_blenderbot_90_layernorm:
             hidden_states = self.layernorm_embedding(inputs_embeds)

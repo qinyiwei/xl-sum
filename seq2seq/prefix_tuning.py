@@ -99,7 +99,7 @@ class PrefixTuningT5(T5PreTrainedModel):
         else:
             self.lowdata_output_token = None
   
-        if config.multi_languages is not None and config.private_embedding:
+        if config.multi_languages is not None and config.private_prefix:
             self.num_lang  = len(config.multi_languages)
         else:
             self.num_lang = 1
@@ -120,26 +120,29 @@ class PrefixTuningT5(T5PreTrainedModel):
 
                 if self.use_self_prefix:
                     self.wte = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                    self.control_trans = nn.Sequential(
+                    self.control_trans = nn.ModuleList([nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
                         nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
-
+                        for i in range(self.num_lang)])
+            
                 self.get_prompt = self.get_prompt_p5
 
                 if self.use_encoder_prefix:
                     self.wte_enc = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                    self.control_trans_enc = nn.Sequential(
+                    self.control_trans_enc = nn.ModuleList([nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
                         nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                        for i in range(self.num_lang)])
 
                 if self.use_cross_prefix:
                     self.wte2 = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                    self.control_trans2 = nn.Sequential(
+                    self.control_trans2 = nn.ModuleList([nn.Sequential(
                         nn.Linear(self.n_embd, self.mid_dim),
                         nn.Tanh(),
                         nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                        for i in range(self.num_lang)])
             else:
                 assert False, "not surpport low_data_init={}".format(low_data_init)
         else:
@@ -148,26 +151,29 @@ class PrefixTuningT5(T5PreTrainedModel):
             print('UNDER PARAMETRIZATION 1')
             if self.use_self_prefix:
                 self.wte = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                self.control_trans = nn.Sequential(
+                self.control_trans = nn.ModuleList([nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
                     nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                    for i in range(self.num_lang)])
 
             self.get_prompt = self.get_prompt_p5
 
             if self.use_encoder_prefix:
                 self.wte_enc = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                self.control_trans_enc = nn.Sequential(
+                self.control_trans_enc = nn.ModuleList([nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
                     nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                    for i in range(self.num_lang)])
 
             if self.use_cross_prefix:
                 self.wte2 = nn.Embedding(self.preseqlen*self.num_lang, self.n_embd)
-                self.control_trans2 = nn.Sequential(
+                self.control_trans2 = nn.ModuleList([nn.Sequential(
                     nn.Linear(self.n_embd, self.mid_dim),
                     nn.Tanh(),
                     nn.Linear(self.mid_dim, self.match_n_layer * 2 * self.n_embd))
+                    for i in range(self.num_lang)])
 
             #TODO: delete this sentence after debug
             #self.load_state_dict(torch.load("/home/yiweiq/initial_weights.ckp"))
@@ -200,7 +206,7 @@ class PrefixTuningT5(T5PreTrainedModel):
 
         if self.use_self_prefix:
             temp_control = self.wte(input_tokens)              #[torch.Size([16, 200, 768])] bsz, num input_tokens, embd_size
-            past_key_values = self.control_trans(temp_control) #bsz, seqlen, layer*emb=768*2*6 [torch.Size([16, 200, 9216])]
+            past_key_values = self.control_trans[lang_id](temp_control) #bsz, seqlen, layer*emb=768*2*6 [torch.Size([16, 200, 9216])]
             bsz, seqlen, _ = past_key_values.shape
             past_key_values = past_key_values.view(bsz, seqlen, self.match_n_layer * 2, self.match_n_head,
                                                 self.match_n_embd) #torch.Size([16, 200, 12, 12, 64]), bsz,seqlen, 6*2, 12, 64
@@ -210,7 +216,7 @@ class PrefixTuningT5(T5PreTrainedModel):
 
         if self.use_cross_prefix:
             temp_control2 = self.wte2(input_tokens)
-            past_key_values2 = self.control_trans2(temp_control2)  # bsz, seqlen, layer*emb
+            past_key_values2 = self.control_trans2[lang_id](temp_control2)  # bsz, seqlen, layer*emb
             bsz, seqlen, _ = past_key_values2.shape
             past_key_values2 = past_key_values2.view(bsz, seqlen, self.match_n_layer * 2, self.match_n_head,
                                                    self.match_n_embd)
@@ -221,7 +227,7 @@ class PrefixTuningT5(T5PreTrainedModel):
         if self.use_encoder_prefix:
             input_tokens_enc = self.input_tokens.unsqueeze(0).expand(old_bsz, -1).to(self.device)
             temp_control_enc = self.wte_enc(input_tokens_enc)
-            past_key_values_enc = self.control_trans_enc(temp_control_enc)  # bsz, seqlen, layer*emb
+            past_key_values_enc = self.control_trans_enc[lang_id](temp_control_enc)  # bsz, seqlen, layer*emb
             bsz_enc, seqlen, _ = past_key_values_enc.shape
             past_key_values_enc = past_key_values_enc.view(bsz_enc, seqlen, self.match_n_layer * 2, self.match_n_head,
                                                      self.match_n_embd)

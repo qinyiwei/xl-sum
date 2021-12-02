@@ -30,17 +30,14 @@ from utils import (
     TokenizedDataset,
     TokenizedDataCollator,
     assert_all_frozen,
-    assert_lm_params_frozen_for_adaptor,
     build_compute_metrics_fn,
     check_output_dir,
     freeze_embeds,
     freeze_params,
-    freeze_lm_params_for_adaptor,
     lmap,
     save_json,
     use_task_specific_params,
     write_txt_file,
-    print_model_parameters_number_for_adaptor,
 )
 
 from tqdm import tqdm
@@ -79,10 +76,6 @@ class ModelArguments:
         default=False,
         metadata={"help": "tie encoder decoder"},
     )
-    adaptor_mid_dim: int = field(default=1200, metadata={"help": "the dimension of the intermediate layer.",})   
-    not_freeze_lmodel: bool = field(default=False, metadata={"help": "Whether to freeze seq2seq model."})
-    use_adaptor: bool = field(default=False, metadata={"help": "Whether to use adaptor or not."})
-    adaptor_layers: str = field(default="0,1,2,3,4,5,6,7,8,9,10,11", metadata={"help": "the layers with adaptor.",})
 
 
 
@@ -114,7 +107,7 @@ class DataTrainingArguments:
         },
     )
     val_max_target_length: Optional[int] = field(
-        default=84,
+        default=512,
         metadata={
             "help": "The maximum total sequence length for validation target text after tokenization. Sequences longer "
             "than this will be truncated, sequences shorter will be padded. "
@@ -136,7 +129,7 @@ class DataTrainingArguments:
     tgt_lang: Optional[str] = field(default=None, metadata={"help": "Target language id for translation."})
     eval_beams: Optional[int] = field(default=4, metadata={"help": "# num_beams to use for evaluation."})
     length_penalty: Optional[float] = field(default=0.6, metadata={"help": "# length_penalty"})
-    no_repeat_ngram_size: Optional[int] = field(default=2, metadata={"help": "# num_beams to use for evaluation."})
+    no_repeat_ngram_size: Optional[int] = field(default=None, metadata={"help": "# num_beams to use for evaluation."})
     upsampling_factor: Optional[float] = field(default=None, 
         metadata={"help": "# use data upsampling factor only when using multiple data files."}
     )
@@ -155,13 +148,11 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "whether to use preprocessed data from disk or tokenize dynamically"}
     )
-    different_lr: bool = field(
-        default=False,
-        metadata={"help": "whether to use different lr for prefix params and LM params"}
-    )
-    learning_rate_LM: Optional[float] = field(default=2e-4, metadata={"help": "learning rate for language model."}) 
-    private_adapter: bool = field(default=False, metadata={"help": "For adapter, whether different languages share adapters."})
-    multi_languages: str = field(default=None, metadata={"help": "language used under multi-language setting."})   
+
+    add_prompt: bool = field(default=False, metadata={"help": "Whether to use prompt."})
+    encoder_head: str = field(default="", metadata={"help": "Add prompt at the head of encoder."})
+    encoder_tail: str = field(default="", metadata={"help": "Add prompt at the end of encoder."})
+    
 
 def handle_metrics(split, metrics, output_dir):
     """
@@ -194,9 +185,10 @@ def main():
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    training_args.different_lr = data_args.different_lr
-    training_args.learning_rate_LM = data_args.learning_rate_LM
-    
+    if data_args.add_prompt:
+        print("encoder_head:{}".format(data_args.encoder_head))
+        print("encoder tail:{}".format(data_args.encoder_tail))
+
     check_output_dir(training_args)
 
     # Setup logging
@@ -244,10 +236,6 @@ def main():
         cache_dir=model_args.cache_dir, **config_kwargs,
     )
 
-    config.adaptor_mid_dim = model_args.adaptor_mid_dim
-    config.use_adaptor = model_args.use_adaptor
-    config.adaptor_layers = [int(i) for i in model_args.adaptor_layers.split(",")]
-
     extra_model_params = ("encoder_layerdrop", "decoder_layerdrop", "dropout", "attention_dropout")
     for p in extra_model_params:
         if getattr(training_args, p, None):
@@ -260,23 +248,10 @@ def main():
         use_fast=False, cache_dir=model_args.cache_dir,
     )
     
-    config.multi_languages = model_args.use_adaptor
-    config.multi_languages = data_args.multi_languages.split('-') if data_args.multi_languages is not None else None
-    if config.multi_languages is not None:
-        config.multi_languages.sort()
-        config.num_lang = len(config.multi_languages)
-    config.private_adapter = data_args.private_adapter
-    
-    if data_args.multi_languages and data_args.rouge_lang is not None and data_args.private_adapter:
-        lang_id = config.multi_languages.index(data_args.rouge_lang)
-    else:
-        lang_id = None
-    config.lang_id = lang_id
-
     if model_args.is_encoder_decoder:
         model = EncoderDecoderModel.from_encoder_decoder_pretrained(model_args.model_name_or_path, 
             model_args.model_name_or_path, tie_encoder_decoder=model_args.tie_encoder_decoder,
-            cache_dir=model_args.cache_dir,
+            cache_dir=model_args.cache_dir
         )
         # just to be safe
         tokenizer.bos_token = tokenizer.cls_token if tokenizer.cls_token is not None else tokenizer.bos_token
@@ -299,12 +274,6 @@ def main():
             config=config,
             cache_dir=model_args.cache_dir,
         )
-    print(model)
-
-
-
-
-
     # use task specific params
     use_task_specific_params(model, data_args.task)
 
@@ -324,13 +293,7 @@ def main():
     if model_args.freeze_encoder:
         freeze_params(model.get_encoder())
         assert_all_frozen(model.get_encoder())
-    if not model_args.not_freeze_lmodel:
-        freeze_lm_params_for_adaptor(model)
-        assert_lm_params_frozen_for_adaptor(model)
-        print('FREEZING ENTIRE seq2seq model.')
     
-    print_model_parameters_number_for_adaptor(model)
-
     total_train_batch_size = (
         training_args.train_batch_size
         * training_args.gradient_accumulation_steps
@@ -408,8 +371,7 @@ def main():
             "actual_batch_size": training_args.train_batch_size,
             "gradient_accum": training_args.gradient_accumulation_steps,
             "is_distributed": bool(training_args.local_rank != -1),
-            "dataset_class": dataset_class,
-            "private": data_args.private_adapter
+            "dataset_class": dataset_class
         }
         train_dataset = (
             MultiDataset(
@@ -439,7 +401,7 @@ def main():
             if training_args.do_train
             else None
         )
-    
+
     if data_args.n_train!=-1:
         random_index = random.sample(range(0, len(train_dataset)), data_args.n_train)
         print("train random_index:")
@@ -455,7 +417,6 @@ def main():
             max_target_length=data_args.val_max_target_length,
             max_source_length=data_args.max_source_length,
             prefix=model.config.prefix or "",
-            lang_id=lang_id,
         )
         if training_args.do_eval or training_args.evaluation_strategy != EvaluationStrategy.NO
         else None
@@ -475,7 +436,6 @@ def main():
             max_target_length=data_args.test_max_target_length,
             max_source_length=data_args.max_source_length,
             prefix=model.config.prefix or "",
-            lang_id=lang_id,
         )
         if training_args.do_predict
         else None

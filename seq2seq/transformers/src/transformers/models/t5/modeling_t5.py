@@ -619,7 +619,7 @@ class T5LayerCrossAttention(nn.Module):
 
 
 class T5Block(nn.Module):
-    def __init__(self, config, has_relative_attention_bias=False):
+    def __init__(self, config, has_relative_attention_bias=False, i = 0):
         super().__init__()
         self.is_decoder = config.is_decoder
         self.layer = nn.ModuleList()
@@ -631,8 +631,18 @@ class T5Block(nn.Module):
 
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
 
-        if hasattr(config, "use_adaptor") and config.use_adaptor:
-            self.adaptor = Adaptor(config) 
+        self.use_adaptor =  config.use_adaptor if hasattr(config, "use_adaptor") else False
+        self.private_adapter = config.private_adapter if hasattr(config, "private_adapter") else False
+        self.lang_id = config.lang_id if hasattr(config, "lang_id") else None
+
+        if self.use_adaptor:
+            if i in config.adaptor_layers:
+                if  self.private_adapter:
+                    self.adaptor = nn.ModuleList([Adaptor(config) for i in range(config.num_lang)])
+                else:
+                    self.adaptor = Adaptor(config) 
+            else:
+                self.adaptor = None
 
     def forward(
         self,
@@ -647,6 +657,7 @@ class T5Block(nn.Module):
         use_cache=False,
         output_attentions=False,
         return_dict=True,
+        lang_id=None,
     ):
 
         if past_key_value is not None:
@@ -712,8 +723,15 @@ class T5Block(nn.Module):
         hidden_states = self.layer[-1](hidden_states)
 
         #Apply Adaptor
-        if hasattr(self, "adaptor"):
-            hidden_states = self.adaptor(hidden_states)
+        if self.use_adaptor:
+            if self.adaptor is not None:
+                if self.private_adapter:
+                    if lang_id is not None:
+                        hidden_states = self.adaptor[lang_id](hidden_states)
+                    else:
+                        hidden_states = self.adaptor[self.lang_id](hidden_states)
+                else:
+                    hidden_states = self.adaptor(hidden_states)
 
         outputs = (hidden_states,)
 
@@ -814,7 +832,7 @@ class T5Stack(T5PreTrainedModel):
         self.is_decoder = config.is_decoder
 
         self.block = nn.ModuleList(
-            [T5Block(config, has_relative_attention_bias=bool(i == 0)) for i in range(config.num_layers)]
+            [T5Block(config, has_relative_attention_bias=bool(i == 0), i = i) for i in range(config.num_layers)]
         )
         self.final_layer_norm = T5LayerNorm(config.d_model, eps=config.layer_norm_epsilon)
         self.dropout = nn.Dropout(config.dropout_rate)
@@ -827,6 +845,7 @@ class T5Stack(T5PreTrainedModel):
         self.preseqlen = config.preseqlen if hasattr(config, 'preseqlen') else 0
         self.use_prefix = config.use_prefix if hasattr(config, 'use_prefix') else False
         self.use_prompt = config.use_prompt if hasattr(config, 'use_prompt') else False
+        self.encoder_prompt_position = config.encoder_prompt_position if hasattr(config, 'encoder_prompt_position') else 'head'
         self.use_encoder_prompt = config.use_encoder_prompt if hasattr(config, 'use_encoder_prompt') else False
         self.use_decoder_prompt = config.use_decoder_prompt if hasattr(config, 'use_decoder_prompt') else False
         self.use_cross_prefix = config.use_cross_prefix if hasattr(config, 'use_cross_prefix') else False
@@ -886,6 +905,7 @@ class T5Stack(T5PreTrainedModel):
         use_prefix=None,
         use_prompt=None,
         prompts=None,
+        lang_id=None,
 
     ):
         if prompts is not None:
@@ -924,8 +944,12 @@ class T5Stack(T5PreTrainedModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         if self.use_prompt and input_prompt is not None and not self.is_decoder:
-            inputs_embeds = torch.cat([input_prompt,inputs_embeds],dim=1)
-            input_shape = inputs_embeds.size()[:-1]
+            if self.encoder_prompt_position == 'head':
+                inputs_embeds = torch.cat([input_prompt, inputs_embeds],dim=1)
+                input_shape = inputs_embeds.size()[:-1]
+            else:
+                inputs_embeds = torch.cat([inputs_embeds, input_prompt],dim=1)
+                input_shape = inputs_embeds.size()[:-1]
 
         batch_size, seq_length = input_shape
 
@@ -942,12 +966,18 @@ class T5Stack(T5PreTrainedModel):
             extend_att_mask = torch.ones(
                 (batch_size, self.preseqlen), device=attention_mask.device, dtype=attention_mask.dtype
             )
-            attention_mask = torch.cat([extend_att_mask, attention_mask], dim = -1)
+            if self.encoder_prompt_position == 'head':
+                attention_mask = torch.cat([extend_att_mask, attention_mask], dim = -1)
+            else:
+                attention_mask = torch.cat([attention_mask, extend_att_mask], dim = -1)
         if self.use_prompt and encoder_attention_mask is not None and self.is_decoder and self.use_encoder_prompt:
             extend_att_mask = torch.ones(
                 (batch_size, self.preseqlen), device=encoder_attention_mask.device, dtype=encoder_attention_mask.dtype
             )
-            encoder_attention_mask = torch.cat([extend_att_mask, encoder_attention_mask], dim = -1)
+            if self.encoder_prompt_position == 'head':
+                encoder_attention_mask = torch.cat([extend_att_mask, encoder_attention_mask], dim = -1)
+            else:
+                encoder_attention_mask = torch.cat([encoder_attention_mask, extend_att_mask], dim = -1)
         if use_prefix and not self.is_decoder and attention_mask is not None and past_key_values is not None and past_key_values[0][4] is not None:
             extend_att_mask = torch.ones(
                 (batch_size, past_key_values[0][4].shape[2]), device=attention_mask.device, dtype=attention_mask.dtype
@@ -1020,6 +1050,7 @@ class T5Stack(T5PreTrainedModel):
                 past_key_value=past_key_value,
                 use_cache=use_cache,
                 output_attentions=output_attentions,
+                lang_id=lang_id,
             )
             # layer_outputs is a tuple with:
             # hidden-states, key-value-states, (self-attention weights), (self-attention position bias), (cross-attention weights), (cross-attention position bias)
@@ -1488,6 +1519,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
         use_prefix=None,
         use_prompt=None,
         prompts=None,
+        lang_id=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -1531,6 +1563,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
                 use_prefix = use_prefix,
                 use_prompt = use_prompt,
                 prompts = prompts,
+                lang_id = lang_id,
             )
         elif return_dict and not isinstance(encoder_outputs, BaseModelOutput):
             encoder_outputs = BaseModelOutput(
@@ -1585,6 +1618,7 @@ class T5ForConditionalGeneration(T5PreTrainedModel):
             use_prefix = use_prefix,
             use_prompt = use_prompt,
             prompts = prompts,
+            lang_id = lang_id,
         )
 
         sequence_output = decoder_outputs[0]

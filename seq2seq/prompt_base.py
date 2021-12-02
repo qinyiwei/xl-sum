@@ -58,6 +58,7 @@ class PromptTransformer(PreTrainedModel):
 
         config_prompt.preseqlen = self.hparams.preseqlen
         config_prompt.use_encoder_prompt = self.hparams.use_encoder_prompt
+        config_prompt.encoder_prompt_position = self.hparams.encoder_prompt_position
         config_prompt.use_decoder_prompt = self.hparams.use_decoder_prompt
         config_prompt.multi_languages = self.hparams.multi_languages.split('-') if self.hparams.multi_languages is not None else None
         if config_prompt.multi_languages is not None:

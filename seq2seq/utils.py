@@ -133,10 +133,10 @@ class MultiDataset(Dataset):
         assert "is_distributed" in dataset_kwargs, "is_distributed required"
         assert "dataset_class" in dataset_kwargs, "dataset_class required"
         
-        if "private_embedding" in dataset_kwargs:
-            self.private_embedding = dataset_kwargs.pop("private_embedding")
+        if "private" in dataset_kwargs:
+            self.private = dataset_kwargs.pop("private")
         else:
-            self.private_embedding = False
+            self.private = False
 
         self.dataloaders = []
         self.total_batch_size = dataset_kwargs.pop("total_batch_size")
@@ -229,7 +229,7 @@ class MultiDataset(Dataset):
             self.shift_iterator(self.current_dataset_idx, self.total_batch_size - self.current_loader_count - self.pos_shift_count)
             self.current_loader_count = 0
 
-        if self.private_embedding:
+        if self.private:
             datapoint[0]['lang_id'] = self.current_dataset_idx
         return datapoint[0]
 
@@ -521,8 +521,15 @@ class Seq2SeqDataCollator:
         return shifted_input_ids
 
     def _encode(self, batch) -> Dict[str, torch.Tensor]:
+        if hasattr(self.data_args,'add_prompt') and self.data_args.add_prompt and (self.data_args.encoder_head != "" or self.data_args.encoder_tail != ""):
+            if self.data_args.encoder_head != "":
+                batch_input=[self.data_args.encoder_head + x["src_texts"] for x in batch]
+            if self.data_args.encoder_tail != "":
+                batch_input=[x["src_texts"] + self.data_args.encoder_tail for x in batch]
+        else:
+            batch_input=[x["src_texts"] for x in batch]
         batch_encoding = self.tokenizer.prepare_seq2seq_batch(
-            [x["src_texts"] for x in batch],
+            batch_input,
             tgt_texts=[x["tgt_texts"] for x in batch],
             max_length=self.data_args.max_source_length,
             max_target_length=self.data_args.max_target_length,
@@ -533,8 +540,15 @@ class Seq2SeqDataCollator:
         return batch_encoding.data
     
     def _bert_encode(self, batch):
+        if hasattr(self.data_args,'add_prompt') and self.data_args.add_prompt and (self.data_args.encoder_head != "" or self.data_args.encoder_tail != ""):
+            if self.data_args.encoder_head != "":
+                batch_input=[self.data_args.encoder_head + x["src_texts"] for x in batch]
+            if self.data_args.encoder_tail != "":
+                batch_input=[x["src_texts"] + self.data_args.encoder_tail for x in batch]
+        else:
+            batch_input=[x["src_texts"] for x in batch]
         inputs = self.tokenizer(
-            [x["src_texts"] for x in batch],
+            batch_input,
             truncation=True,
             max_length=self.data_args.max_source_length,
             padding=self.padding,  # TPU hack

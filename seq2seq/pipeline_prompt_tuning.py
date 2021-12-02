@@ -92,6 +92,7 @@ class ModelArguments:
 
     use_encoder_prompt: bool = field(default=False, metadata={"help": "Whether to use encoder prompt."})
     use_decoder_prompt: bool = field(default=False, metadata={"help": "Whether to use decoder prompt."})
+    encoder_prompt_position: str = field(default="head", metadata={"help": "Could be head/tail. Position of encoder prompt."})
     load_whole_model: bool = field(default=False, metadata={"help": "Whether to load the whole model or only the prefix parameters."})
 
     multi_languages: str = field(default=None, metadata={"help": "language used under multi-language setting."})   
@@ -254,6 +255,7 @@ def main():
         config.use_prompt = True
         config.use_encoder_prompt = model_args.use_encoder_prompt
         config.use_decoder_prompt = model_args.use_decoder_prompt
+        config.encoder_prompt_position = model_args.encoder_prompt_position
 
     extra_model_params = ("encoder_layerdrop", "decoder_layerdrop", "dropout", "attention_dropout")
     for p in extra_model_params:
